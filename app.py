@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, has_request_context
 from utils.db import get_connection
 from werkzeug.security import check_password_hash, generate_password_hash
 from functools import wraps
@@ -14,6 +14,7 @@ import io
 import secrets
 import hmac
 import hashlib
+import re
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -203,6 +204,12 @@ def garantir_schema_compativel():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_contatos_empresa_telefone
+        ON contatos (empresa_id, telefone)
+        """
+    )
     _garantir_coluna(conn, "conversas", "bot_ativo", "INTEGER DEFAULT 1")
     _garantir_coluna(conn, "conversas", "atendente_nome", "TEXT")
     _garantir_coluna(conn, "conversas", "etapa", "TEXT")
@@ -228,6 +235,12 @@ def garantir_schema_compativel():
     _garantir_coluna(conn, "mensagens", "user_id", "INTEGER")
     _garantir_coluna(conn, "mensagens", "canal", "TEXT DEFAULT 'interno'")
     _garantir_coluna(conn, "mensagens", "external_id", "TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_mensagens_external_id_canal
+        ON mensagens (external_id, canal, remetente_tipo, direcao)
+        """
+    )
 
     _garantir_coluna(conn, "canal_integracoes", "access_token", "TEXT")
     _garantir_coluna(conn, "canal_integracoes", "webhook_token", "TEXT")
@@ -397,14 +410,20 @@ def buscar_empresas_do_usuario(user_id):
 
 
 def usuario_logado():
+    if not has_request_context():
+        return False
     return "user_id" in session and "empresa_id" in session
 
 
 def obter_user_id_logado():
+    if not has_request_context():
+        return None
     return session.get("user_id")
 
 
 def obter_empresa_id_logada():
+    if not has_request_context():
+        return None
     return session.get("empresa_id")
 
 
@@ -762,9 +781,9 @@ def buscar_ultima_mensagem_completa(conversa_id):
 def criar_mensagem(conversa_id, remetente_tipo, conteudo, direcao=None, regra_id=None, user_id=None, canal="interno", external_id=None):
     conteudo = (conteudo or "").strip()
     if not conteudo:
-        return
+        return None
     if not conversa_acessivel_na_sessao(conversa_id):
-        return
+        return None
 
     if direcao is None:
         direcao = "recebida" if remetente_tipo == "cliente" else "enviada"
@@ -781,9 +800,9 @@ def criar_mensagem(conversa_id, remetente_tipo, conteudo, direcao=None, regra_id
 
     if not conversa:
         conn.close()
-        return
+        return None
 
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO mensagens (
             conversa_id,
@@ -799,6 +818,7 @@ def criar_mensagem(conversa_id, remetente_tipo, conteudo, direcao=None, regra_id
         """,
         (conversa_id, direcao, remetente_tipo, conteudo, regra_id, user_id, canal, external_id)
     )
+    mensagem_id = cursor.lastrowid
     conn.commit()
     conn.close()
 
@@ -818,6 +838,7 @@ def criar_mensagem(conversa_id, remetente_tipo, conteudo, direcao=None, regra_id
         ),
         empresa_id=conversa["empresa_id"]
     )
+    return mensagem_id
 
 
 def vincular_atendente_conversa(conversa_id, user_id=None, nome_atendente=None, papel="atendente"):
@@ -1146,6 +1167,155 @@ def atualizar_fluxo_ativo_conversa(conversa_id, fluxo_id=None, bloco_atual_id=No
     conn.close()
 
 
+def normalizar_data_agendamento(data_texto, base=None):
+    texto = normalizar_texto(data_texto)
+    hoje = (base or datetime.now()).date()
+    if not texto:
+        return None, "Informe uma data para o agendamento."
+
+    aliases = {
+        "hoje": hoje,
+        "amanha": hoje + timedelta(days=1),
+        "amanhã": hoje + timedelta(days=1),
+    }
+    if texto in aliases:
+        return aliases[texto].strftime("%Y-%m-%d"), None
+
+    dias_semana = {
+        "segunda": 0,
+        "segunda feira": 0,
+        "terca": 1,
+        "terca feira": 1,
+        "terça": 1,
+        "terça feira": 1,
+        "quarta": 2,
+        "quarta feira": 2,
+        "quinta": 3,
+        "quinta feira": 3,
+        "sexta": 4,
+        "sexta feira": 4,
+        "sabado": 5,
+        "sábado": 5,
+        "domingo": 6,
+    }
+    if texto in dias_semana:
+        dias_ate = (dias_semana[texto] - hoje.weekday()) % 7
+        data_obj = hoje + timedelta(days=dias_ate)
+        return data_obj.strftime("%Y-%m-%d"), None
+
+    formatos = [
+        ("%Y-%m-%d", r"^\d{4}-\d{1,2}-\d{1,2}$"),
+        ("%d/%m/%Y", r"^\d{1,2}/\d{1,2}/\d{4}$"),
+        ("%d-%m-%Y", r"^\d{1,2}-\d{1,2}-\d{4}$"),
+    ]
+    for formato, padrao in formatos:
+        if re.match(padrao, texto):
+            try:
+                data_obj = datetime.strptime(texto, formato).date()
+                return data_obj.strftime("%Y-%m-%d"), None
+            except ValueError:
+                return None, "Data inválida."
+
+    match_sem_ano = re.match(r"^(\d{1,2})[/-](\d{1,2})$", texto)
+    if match_sem_ano:
+        dia = int(match_sem_ano.group(1))
+        mes = int(match_sem_ano.group(2))
+        try:
+            data_obj = datetime(hoje.year, mes, dia).date()
+            if data_obj < hoje:
+                data_obj = datetime(hoje.year + 1, mes, dia).date()
+            return data_obj.strftime("%Y-%m-%d"), None
+        except ValueError:
+            return None, "Data inválida."
+
+    return None, "Use uma data válida, por exemplo 2026-04-25 ou 25/04/2026."
+
+
+def normalizar_horario_agendamento(horario_texto):
+    texto = normalizar_texto(horario_texto)
+    if not texto:
+        return None, "Informe um horário para o agendamento."
+
+    texto = texto.replace(" horas", "h").replace(" hora", "h")
+    match = re.match(r"^(\d{1,2})(?::|h)?(\d{2})?$", texto)
+    if not match:
+        return None, "Use um horário válido, por exemplo 14:30."
+
+    hora = int(match.group(1))
+    minuto = int(match.group(2) or 0)
+    if hora < 0 or hora > 23 or minuto < 0 or minuto > 59:
+        return None, "Horário inválido."
+
+    return f"{hora:02d}:{minuto:02d}", None
+
+
+def disponibilidade_agendamento_ok(conn, empresa_id, data_ag, horario_ag):
+    data_obj = datetime.strptime(data_ag, "%Y-%m-%d")
+    dia_semana = data_obj.weekday()
+    faixas = conn.execute(
+        """
+        SELECT hora_inicio, hora_fim
+        FROM agenda_disponibilidade
+        WHERE empresa_id = ? AND dia_semana = ? AND ativo = 1
+        ORDER BY hora_inicio ASC
+        """,
+        (empresa_id, dia_semana)
+    ).fetchall()
+    if not faixas:
+        return True
+
+    for faixa in faixas:
+        inicio, erro_inicio = normalizar_horario_agendamento(faixa["hora_inicio"])
+        fim, erro_fim = normalizar_horario_agendamento(faixa["hora_fim"])
+        if erro_inicio or erro_fim:
+            continue
+        if inicio <= horario_ag <= fim:
+            return True
+    return False
+
+
+def validar_dados_agendamento(conn, empresa_id, data_texto, horario_texto, excluir_agendamento_id=None):
+    data_norm, erro_data = normalizar_data_agendamento(data_texto)
+    if erro_data:
+        return None, None, erro_data
+
+    horario_norm, erro_horario = normalizar_horario_agendamento(horario_texto)
+    if erro_horario:
+        return None, None, erro_horario
+
+    try:
+        inicio_agendamento = datetime.strptime(f"{data_norm} {horario_norm}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None, None, "Data ou horário inválido."
+
+    agora = datetime.now().replace(second=0, microsecond=0)
+    if inicio_agendamento < agora:
+        return None, None, "Não é possível agendar em data ou horário passado."
+
+    if not disponibilidade_agendamento_ok(conn, empresa_id, data_norm, horario_norm):
+        return None, None, "Horário fora da disponibilidade configurada."
+
+    query = """
+        SELECT id
+        FROM agendamentos
+        WHERE empresa_id = ?
+          AND data = ?
+          AND horario = ?
+          AND status != 'cancelado'
+    """
+    params = [empresa_id, data_norm, horario_norm]
+    if excluir_agendamento_id:
+        query += " AND id != ?"
+        params.append(excluir_agendamento_id)
+    query += " LIMIT 1"
+
+    conflito = conn.execute(query, tuple(params)).fetchone()
+    if conflito:
+        return None, None, "Já existe agendamento nesse horário."
+
+    return data_norm, horario_norm, None
+
+
 def salvar_agendamento(conversa_id, data_texto, horario_texto, servico=None):
     if not conversa_acessivel_na_sessao(conversa_id):
         return False, "Conversa não encontrada."
@@ -1165,50 +1335,15 @@ def salvar_agendamento(conversa_id, data_texto, horario_texto, servico=None):
         conn.close()
         return False, "Conversa não encontrada."
 
-    def _disponibilidade_ok(empresa_id, data_ag, horario_ag):
-        try:
-            data_obj = datetime.strptime((data_ag or "").strip(), "%Y-%m-%d")
-            hora_obj = datetime.strptime((horario_ag or "").strip(), "%H:%M")
-        except Exception:
-            return True
-        dia_semana = data_obj.weekday()
-        faixas = conn.execute(
-            """
-            SELECT hora_inicio, hora_fim
-            FROM agenda_disponibilidade
-            WHERE empresa_id = ? AND dia_semana = ? AND ativo = 1
-            ORDER BY hora_inicio ASC
-            """,
-            (empresa_id, dia_semana)
-        ).fetchall()
-        if not faixas:
-            return True
-        hora_txt = hora_obj.strftime("%H:%M")
-        for faixa in faixas:
-            if faixa["hora_inicio"] <= hora_txt <= faixa["hora_fim"]:
-                return True
-        return False
-
-    if not _disponibilidade_ok(conversa["empresa_id"], data_texto, horario_texto):
+    data_normalizada, horario_normalizado, erro_validacao = validar_dados_agendamento(
+        conn,
+        conversa["empresa_id"],
+        data_texto,
+        horario_texto
+    )
+    if erro_validacao:
         conn.close()
-        return False, "Horario fora da disponibilidade configurada."
-
-    conflito = conn.execute(
-        """
-        SELECT id
-        FROM agendamentos
-        WHERE empresa_id = ?
-          AND data = ?
-          AND horario = ?
-          AND status != 'cancelado'
-        LIMIT 1
-        """,
-        (conversa["empresa_id"], data_texto, horario_texto)
-    ).fetchone()
-
-    if conflito:
-        conn.close()
-        return False, "Já existe agendamento nesse horário."
+        return False, erro_validacao
 
     cursor = conn.execute(
         """
@@ -1228,8 +1363,8 @@ def salvar_agendamento(conversa_id, data_texto, horario_texto, servico=None):
             conversa["contato_id"],
             conversa_id,
             servico,
-            data_texto,
-            horario_texto,
+            data_normalizada,
+            horario_normalizado,
             "confirmado"
         )
     )
@@ -1239,12 +1374,12 @@ def salvar_agendamento(conversa_id, data_texto, horario_texto, servico=None):
         "agendamento_criado",
         referencia_id=cursor.lastrowid,
         valor=json.dumps(
-            {"conversa_id": conversa_id, "servico": servico, "data": data_texto, "horario": horario_texto},
+            {"conversa_id": conversa_id, "servico": servico, "data": data_normalizada, "horario": horario_normalizado},
             ensure_ascii=False
         ),
         empresa_id=conversa["empresa_id"]
     )
-    return True, None
+    return True, {"data": data_normalizada, "horario": horario_normalizado}
 
 
 # =========================================================
@@ -1310,6 +1445,9 @@ def extrair_condicoes_regra(condicao_json):
 def regra_atende_contexto(regra, conversa_id=None):
     if not conversa_id:
         return True
+    if not conversa_acessivel_na_sessao(conversa_id):
+        return False
+
     condicoes = extrair_condicoes_regra(regra["condicao_json"])
     etapa_cond = condicoes.get("etapa")
     etapas_necessarias = etapa_cond if isinstance(etapa_cond, list) else ([etapa_cond] if etapa_cond else [])
@@ -1449,6 +1587,9 @@ def buscar_melhor_regra(mensagem_cliente, empresa_id=None, conversa_id=None):
 def aplicar_acoes_regra(conversa_id, regra):
     if not conversa_id or not regra:
         return
+    if not conversa_acessivel_na_sessao(conversa_id):
+        return
+
     acoes = extrair_acoes_regra(regra["acao_json"])
     etapa_destino = (acoes.get("etapa_destino") or "").strip()
     if etapa_destino:
@@ -1616,6 +1757,9 @@ def parse_config_json(config_json):
 
 
 def iniciar_fluxo_conversa(conversa_id, fluxo_id):
+    if not conversa_acessivel_na_sessao(conversa_id):
+        return None
+
     empresa_id = obter_empresa_id_da_conversa(conversa_id) or obter_empresa_id_logada()
     fluxo = buscar_fluxo(fluxo_id, empresa_id)
     if not fluxo or int(fluxo["ativo"] or 0) != 1:
@@ -1660,6 +1804,9 @@ def buscar_proximo_bloco(bloco_atual, resposta_cliente=None):
 
 
 def finalizar_fluxo_conversa(conversa_id):
+    if not conversa_acessivel_na_sessao(conversa_id):
+        return
+
     fluxo_atual = fluxo_id_ativo_da_conversa(conversa_id)
     empresa_id = obter_empresa_id_da_conversa(conversa_id)
     atualizar_fluxo_ativo_conversa(conversa_id, fluxo_id=None, bloco_atual_id=None)
@@ -1673,6 +1820,9 @@ def finalizar_fluxo_conversa(conversa_id):
 
 
 def executar_bloco_fluxo(conversa_id, bloco, mensagem_cliente=None):
+    if not conversa_acessivel_na_sessao(conversa_id):
+        return None
+
     if not bloco:
         finalizar_fluxo_conversa(conversa_id)
         return None
@@ -1763,14 +1913,14 @@ def executar_bloco_fluxo(conversa_id, bloco, mensagem_cliente=None):
 
         if acao == "salvar_agendamento":
             contexto = buscar_contexto_conversa(conversa_id)
-            sucesso_agendamento, erro_agendamento = salvar_agendamento(
+            sucesso_agendamento, resultado_agendamento = salvar_agendamento(
                 conversa_id,
                 contexto.get("data"),
                 contexto.get("horario"),
                 contexto.get("servico")
             )
-            if not sucesso_agendamento and erro_agendamento:
-                return f"Não consegui salvar o agendamento: {erro_agendamento}"
+            if not sucesso_agendamento and resultado_agendamento:
+                return f"Não consegui salvar o agendamento: {resultado_agendamento}"
 
         proximo = buscar_proximo_bloco(bloco)
         if proximo:
@@ -1983,6 +2133,9 @@ def classificar_intencao(texto_normalizado):
 
 
 def buscar_historico_conversa_ia(conversa_id, limite=12):
+    if not conversa_acessivel_na_sessao(conversa_id):
+        return []
+
     conn = get_connection()
     mensagens = conn.execute(
         """
@@ -2009,6 +2162,8 @@ def buscar_historico_conversa_ia(conversa_id, limite=12):
 
 def buscar_memoria_cliente(conversa_id):
     if not conversa_id:
+        return {}
+    if not conversa_acessivel_na_sessao(conversa_id):
         return {}
 
     conn = get_connection()
@@ -2037,7 +2192,10 @@ def buscar_memoria_cliente(conversa_id):
 
 
 def montar_prompt_sistema_ia(conversa_id=None):
-    nome_empresa = buscar_nome_empresa(obter_empresa_id_da_conversa(conversa_id) if conversa_id else None)
+    empresa_prompt_id = None
+    if conversa_id and conversa_acessivel_na_sessao(conversa_id):
+        empresa_prompt_id = obter_empresa_id_da_conversa(conversa_id)
+    nome_empresa = buscar_nome_empresa(empresa_prompt_id)
 
     base = (
         f"Você é a atendente virtual da empresa {nome_empresa}. "
@@ -2330,15 +2488,25 @@ def gerar_resposta_bot(mensagem_cliente, conversa_id=None):
         return resposta, None
 
     if etapa == "agendamento_dia":
+        data_normalizada, erro_data = normalizar_data_agendamento(mensagem_cliente)
+        if erro_data:
+            resposta_erro = f"Não consegui entender a data: {erro_data}"
+            atualizar_memoria_basica(conversa_id, mensagem_cliente, resposta_erro)
+            return resposta_erro, None
+        if datetime.strptime(data_normalizada, "%Y-%m-%d").date() < datetime.now().date():
+            resposta_erro = "Não é possível agendar em uma data passada."
+            atualizar_memoria_basica(conversa_id, mensagem_cliente, resposta_erro)
+            return resposta_erro, None
+
         novo_contexto = dict(contexto)
-        novo_contexto["data"] = mensagem_cliente.strip()
+        novo_contexto["data"] = data_normalizada
 
         if conversa_id:
             atualizar_contexto_conversa(conversa_id, novo_contexto)
             atualizar_etapa_conversa(conversa_id, "agendamento_horario")
 
         resposta = (
-            f"Perfeito 💖 Agendamento para {mensagem_cliente.strip()}.\n\n"
+            f"Perfeito 💖 Agendamento para {data_normalizada}.\n\n"
             "Agora me fala o HORÁRIO que você prefere 😊"
         )
         atualizar_memoria_basica(conversa_id, mensagem_cliente, resposta)
@@ -2348,24 +2516,27 @@ def gerar_resposta_bot(mensagem_cliente, conversa_id=None):
         data_agendamento = contexto.get("data", "Data não informada")
         horario_agendamento = mensagem_cliente.strip()
         servico_agendamento = contexto.get("servico")
+        agendamento_confirmado = {"data": data_agendamento, "horario": horario_agendamento}
 
         if conversa_id:
-            sucesso_agendamento, erro_agendamento = salvar_agendamento(
+            sucesso_agendamento, resultado_agendamento = salvar_agendamento(
                 conversa_id,
                 data_agendamento,
                 horario_agendamento,
                 servico_agendamento
             )
-            if not sucesso_agendamento and erro_agendamento:
-                resposta_erro = f"Não consegui confirmar: {erro_agendamento}"
+            if not sucesso_agendamento and resultado_agendamento:
+                resposta_erro = f"Não consegui confirmar: {resultado_agendamento}"
                 atualizar_memoria_basica(conversa_id, mensagem_cliente, resposta_erro)
                 return resposta_erro, None
+            if isinstance(resultado_agendamento, dict):
+                agendamento_confirmado = resultado_agendamento
             limpar_fluxo_conversa(conversa_id)
 
         resposta = (
             "Perfeito ✨ Agendamento confirmado!\n\n"
-            f"📅 {data_agendamento}\n"
-            f"⏰ {horario_agendamento}\n\n"
+            f"📅 {agendamento_confirmado['data']}\n"
+            f"⏰ {agendamento_confirmado['horario']}\n\n"
             "Se precisar de mais alguma coisa, estou por aqui 💖"
         )
         atualizar_memoria_basica(conversa_id, mensagem_cliente, resposta)
@@ -4021,6 +4192,7 @@ def remarcar_agendamento(agendamento_id):
     servico = (request.form.get("servico") or "").strip()
     if not data or not horario:
         return redirect(url_for("agendamentos"))
+    empresa_id = obter_empresa_id_logada()
     conn = get_connection()
     agendamento = conn.execute(
         """
@@ -4028,27 +4200,21 @@ def remarcar_agendamento(agendamento_id):
         FROM agendamentos
         WHERE id = ? AND empresa_id = ?
         """,
-        (agendamento_id, obter_empresa_id_logada())
+        (agendamento_id, empresa_id)
     ).fetchone()
     if not agendamento:
         conn.close()
         return redirect(url_for("agendamentos"))
-    conflito = conn.execute(
-        """
-        SELECT id
-        FROM agendamentos
-        WHERE empresa_id = ?
-          AND id != ?
-          AND data = ?
-          AND horario = ?
-          AND status != 'cancelado'
-        LIMIT 1
-        """,
-        (obter_empresa_id_logada(), agendamento_id, data, horario)
-    ).fetchone()
-    if conflito:
+    data_normalizada, horario_normalizado, erro_validacao = validar_dados_agendamento(
+        conn,
+        empresa_id,
+        data,
+        horario,
+        excluir_agendamento_id=agendamento_id
+    )
+    if erro_validacao:
         conn.close()
-        flash("Conflito de horário: já existe outro agendamento nesse período.", "erro")
+        flash(erro_validacao, "erro")
         return redirect(url_for("agendamentos"))
     conn.execute(
         """
@@ -4059,14 +4225,14 @@ def remarcar_agendamento(agendamento_id):
             status = 'confirmado'
         WHERE id = ? AND empresa_id = ?
         """,
-        (servico, data, horario, agendamento_id, obter_empresa_id_logada())
+        (servico, data_normalizada, horario_normalizado, agendamento_id, empresa_id)
     )
     conn.commit()
     conn.close()
     registrar_evento(
         "agendamento_remarcado",
         referencia_id=agendamento_id,
-        valor=json.dumps({"data": data, "horario": horario}, ensure_ascii=False)
+        valor=json.dumps({"data": data_normalizada, "horario": horario_normalizado}, ensure_ascii=False)
     )
     return redirect(url_for("agendamentos"))
 
@@ -5092,17 +5258,27 @@ def adicionar_disponibilidade():
     hora_fim = (request.form.get("hora_fim") or "").strip()
     if not dia_semana.isdigit() or not hora_inicio or not hora_fim:
         return redirect(url_for("configuracoes"))
+    dia_semana_int = int(dia_semana)
+    if dia_semana_int < 0 or dia_semana_int > 6:
+        flash("Dia da semana inválido.", "erro")
+        return redirect(url_for("configuracoes"))
+    hora_inicio_norm, erro_inicio = normalizar_horario_agendamento(hora_inicio)
+    hora_fim_norm, erro_fim = normalizar_horario_agendamento(hora_fim)
+    if erro_inicio or erro_fim or hora_inicio_norm >= hora_fim_norm:
+        flash("Informe uma faixa de horário válida.", "erro")
+        return redirect(url_for("configuracoes"))
+
     conn = get_connection()
     conn.execute(
         """
         INSERT INTO agenda_disponibilidade (empresa_id, dia_semana, hora_inicio, hora_fim, ativo)
         VALUES (?, ?, ?, ?, 1)
         """,
-        (obter_empresa_id_logada(), int(dia_semana), hora_inicio, hora_fim)
+        (obter_empresa_id_logada(), dia_semana_int, hora_inicio_norm, hora_fim_norm)
     )
     conn.commit()
     conn.close()
-    registrar_evento("disponibilidade_adicionada", valor=f"{dia_semana}:{hora_inicio}-{hora_fim}")
+    registrar_evento("disponibilidade_adicionada", valor=f"{dia_semana}:{hora_inicio_norm}-{hora_fim_norm}")
     return redirect(url_for("configuracoes"))
 
 
@@ -5291,23 +5467,66 @@ def receber_webhook_canal_seguro(canal, token):
     return resposta, status_code
 
 
+def primeiro_item_lista(valor):
+    if isinstance(valor, list) and valor:
+        primeiro = valor[0]
+        return primeiro if isinstance(primeiro, dict) else {}
+    return {}
+
+
+def mensagem_externa_ja_recebida(empresa_id, canal, external_id):
+    external_id = (external_id or "").strip()
+    if not empresa_id or not canal or not external_id:
+        return None
+
+    conn = get_connection()
+    mensagem = conn.execute(
+        """
+        SELECT
+            m.id AS mensagem_id,
+            m.conversa_id,
+            c.contato_id
+        FROM mensagens m
+        JOIN conversas c ON c.id = m.conversa_id
+        WHERE c.empresa_id = ?
+          AND m.canal = ?
+          AND m.external_id = ?
+          AND m.remetente_tipo = 'cliente'
+          AND m.direcao = 'recebida'
+        ORDER BY m.id DESC
+        LIMIT 1
+        """,
+        (empresa_id, canal, external_id)
+    ).fetchone()
+    conn.close()
+    return mensagem
+
+
 def extrair_payload_mensagem_webhook(canal, payload):
-    payload = payload or {}
+    if not isinstance(payload, dict):
+        return {"erro": "payload_invalido"}
+
     canal = (canal or "").strip().lower()
     if canal == "whatsapp":
-        entry = (payload.get("entry") or [{}])[0]
-        change = (entry.get("changes") or [{}])[0]
+        entry = primeiro_item_lista(payload.get("entry"))
+        change = primeiro_item_lista(entry.get("changes"))
         value = change.get("value") or {}
-        mensagem = (value.get("messages") or [{}])[0]
-        contato = (value.get("contacts") or [{}])[0]
+        mensagem = primeiro_item_lista(value.get("messages"))
+        if not mensagem and value.get("statuses"):
+            return {"ignorado": True, "motivo": "status_whatsapp"}
+        contato = primeiro_item_lista(value.get("contacts"))
         texto = ((mensagem.get("text") or {}).get("body") or payload.get("text") or "").strip()
         telefone = (mensagem.get("from") or payload.get("telefone") or payload.get("from") or "").strip()
         nome = ((contato.get("profile") or {}).get("name") or payload.get("nome") or telefone or "Cliente WhatsApp").strip()
         external_id = (mensagem.get("id") or payload.get("external_id") or "").strip()
         return {"texto": texto, "telefone": telefone, "nome": nome, "external_id": external_id}
 
-    mensagem = payload.get("message") or {}
-    remetente = payload.get("sender") or {}
+    entry = primeiro_item_lista(payload.get("entry"))
+    messaging = primeiro_item_lista(entry.get("messaging"))
+    mensagem = payload.get("message") or messaging.get("message") or {}
+    remetente = payload.get("sender") or messaging.get("sender") or {}
+    if not mensagem and messaging:
+        return {"ignorado": True, "motivo": "evento_instagram_sem_mensagem"}
     texto = (mensagem.get("text") or payload.get("text") or "").strip()
     telefone = (str(remetente.get("id") or payload.get("instagram_user_id") or payload.get("from") or "")).strip()
     nome = (payload.get("nome") or payload.get("username") or telefone or "Cliente Instagram").strip()
@@ -5383,16 +5602,74 @@ def enviar_mensagem_externa_canal(canal, integracao, destinatario, conteudo):
         return {"ok": False, "envio_real": False, "erro": str(exc)}
 
 
-def receber_mensagem_canal(canal, token, payload):
-    integracao = buscar_integracao_por_token(canal, token)
-    if not integracao:
-        return {"ok": False, "erro": "integracao_inativa_ou_invalida"}, 404
+def deve_tentar_reenvio_externo(resultado_envio):
+    if not resultado_envio or resultado_envio.get("ok"):
+        return False
 
+    status_code = resultado_envio.get("status_code")
+    if isinstance(status_code, int):
+        return status_code >= 500 or status_code == 429
+
+    erro = resultado_envio.get("erro")
+    erros_configuracao = [
+        "integracao_invalida",
+        "destinatario_ou_conteudo_vazio",
+        "access_token_nao_configurado",
+        "phone_number_id_nao_configurado",
+        "instagram_account_id_nao_configurado",
+    ]
+    if isinstance(erro, str) and erro in erros_configuracao:
+        return False
+
+    return True
+
+
+def enviar_mensagem_externa_canal_com_retry(canal, integracao, destinatario, conteudo, tentativas=2):
+    tentativas = max(1, int(tentativas or 1))
+    ultimo_resultado = None
+
+    for tentativa in range(1, tentativas + 1):
+        ultimo_resultado = enviar_mensagem_externa_canal(canal, integracao, destinatario, conteudo)
+        ultimo_resultado["tentativa"] = tentativa
+        ultimo_resultado["tentativas_realizadas"] = tentativa
+        if ultimo_resultado.get("ok") or not deve_tentar_reenvio_externo(ultimo_resultado):
+            return ultimo_resultado
+
+    return ultimo_resultado or {"ok": False, "envio_real": False, "erro": "envio_nao_realizado", "tentativas_realizadas": 0}
+
+
+def salvar_mensagem_recebida_canal(canal, integracao, payload):
     dados = extrair_payload_mensagem_webhook(canal, payload)
+    if dados.get("ignorado"):
+        return {
+            "ok": True,
+            "ignorado": True,
+            "motivo": dados.get("motivo"),
+        }, 200
+    if dados.get("erro"):
+        return {"ok": False, "erro": dados.get("erro")}, 400
+
     texto = dados.get("texto")
     telefone = dados.get("telefone")
     if not texto or not telefone:
         return {"ok": False, "erro": "mensagem_sem_texto_ou_remetente"}, 400
+
+    duplicada = mensagem_externa_ja_recebida(integracao["empresa_id"], canal, dados.get("external_id"))
+    if duplicada:
+        registrar_evento(
+            f"webhook_{canal}_duplicado",
+            referencia_id=duplicada["conversa_id"],
+            valor=json.dumps({"external_id": dados.get("external_id")}, ensure_ascii=False),
+            empresa_id=integracao["empresa_id"]
+        )
+        return {
+            "ok": True,
+            "duplicada": True,
+            "canal": canal,
+            "conversa_id": duplicada["conversa_id"],
+            "contato_id": duplicada["contato_id"],
+            "external_id": dados.get("external_id"),
+        }, 200
 
     conn = get_connection()
     contato = conn.execute(
@@ -5429,7 +5706,13 @@ def receber_mensagem_canal(canal, token, payload):
     conn.close()
 
     conversa_id = buscar_ou_criar_conversa(contato_id, empresa_id=integracao["empresa_id"])
-    criar_mensagem(conversa_id, "cliente", texto, "recebida", canal=canal, external_id=dados.get("external_id"))
+    if not conversa_id:
+        return {"ok": False, "erro": "conversa_nao_encontrada"}, 404
+
+    mensagem_id = criar_mensagem(conversa_id, "cliente", texto, "recebida", canal=canal, external_id=dados.get("external_id"))
+    if not mensagem_id:
+        return {"ok": False, "erro": "mensagem_nao_salva"}, 500
+
     registrar_evento(
         f"webhook_{canal}_recebido",
         referencia_id=conversa_id,
@@ -5437,8 +5720,25 @@ def receber_mensagem_canal(canal, token, payload):
         empresa_id=integracao["empresa_id"]
     )
 
+    return {
+        "ok": True,
+        "canal": canal,
+        "conversa_id": conversa_id,
+        "contato_id": contato_id,
+        "mensagem_id": mensagem_id,
+        "texto": texto,
+        "destinatario": telefone,
+        "external_id": dados.get("external_id"),
+        "duplicada": False,
+    }, 200
+
+
+def processar_resposta_automatica_canal(canal, integracao, conversa_id, destinatario, texto):
     conn = get_connection()
-    conversa = conn.execute("SELECT bot_ativo FROM conversas WHERE id = ?", (conversa_id,)).fetchone()
+    conversa = conn.execute(
+        "SELECT bot_ativo FROM conversas WHERE id = ? AND empresa_id = ?",
+        (conversa_id, integracao["empresa_id"])
+    ).fetchone()
     conn.close()
     resposta_bot = None
     regra_id = None
@@ -5447,7 +5747,7 @@ def receber_mensagem_canal(canal, token, payload):
         resposta_bot, regra_id = gerar_resposta_bot(texto, conversa_id)
         if resposta_bot:
             criar_mensagem(conversa_id, "bot", resposta_bot, "enviada", regra_id, canal=canal)
-            envio_externo = enviar_mensagem_externa_canal(canal, integracao, telefone, resposta_bot)
+            envio_externo = enviar_mensagem_externa_canal_com_retry(canal, integracao, destinatario, resposta_bot)
             registrar_evento(
                 f"resposta_{canal}_enviada" if envio_externo.get("envio_real") else f"resposta_{canal}_preparada",
                 referencia_id=conversa_id,
@@ -5463,11 +5763,33 @@ def receber_mensagem_canal(canal, token, payload):
                 empresa_id=integracao["empresa_id"]
             )
 
+    return resposta_bot, regra_id, envio_externo
+
+
+def receber_mensagem_canal(canal, token, payload):
+    integracao = buscar_integracao_por_token(canal, token)
+    if not integracao:
+        return {"ok": False, "erro": "integracao_inativa_ou_invalida"}, 404
+
+    resultado_salvamento, status_code = salvar_mensagem_recebida_canal(canal, integracao, payload)
+    if status_code >= 400 or resultado_salvamento.get("ignorado") or resultado_salvamento.get("duplicada"):
+        return resultado_salvamento, status_code
+
+    resposta_bot, regra_id, envio_externo = processar_resposta_automatica_canal(
+        canal,
+        integracao,
+        resultado_salvamento["conversa_id"],
+        resultado_salvamento["destinatario"],
+        resultado_salvamento["texto"]
+    )
+
     return {
         "ok": True,
         "canal": canal,
-        "conversa_id": conversa_id,
-        "contato_id": contato_id,
+        "conversa_id": resultado_salvamento["conversa_id"],
+        "contato_id": resultado_salvamento["contato_id"],
+        "mensagem_id": resultado_salvamento["mensagem_id"],
+        "external_id": resultado_salvamento.get("external_id"),
         "resposta_preparada": resposta_bot,
         "envio_real": bool(envio_externo.get("envio_real")),
         "envio_status": envio_externo,

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS contatos (
 
 CREATE INDEX IF NOT EXISTS idx_contatos_empresa_id ON contatos(empresa_id);
 CREATE INDEX IF NOT EXISTS idx_contatos_telefone ON contatos(telefone);
+CREATE INDEX IF NOT EXISTS idx_contatos_empresa_telefone ON contatos(empresa_id, telefone);
 
 -- =========================
 -- CONVERSAS
@@ -161,6 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_mensagens_regra_id ON mensagens(regra_id);
 CREATE INDEX IF NOT EXISTS idx_mensagens_remetente_tipo ON mensagens(remetente_tipo);
 CREATE INDEX IF NOT EXISTS idx_mensagens_user_id ON mensagens(user_id);
 CREATE INDEX IF NOT EXISTS idx_mensagens_canal ON mensagens(canal);
+CREATE INDEX IF NOT EXISTS idx_mensagens_external_id_canal ON mensagens(external_id, canal, remetente_tipo, direcao);
 
 -- =========================
 -- ATENDENTES POR CONVERSA
