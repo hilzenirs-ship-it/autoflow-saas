@@ -1,0 +1,592 @@
+{% extends "base.html" %}
+
+{% block title %}Editor de Fluxo{% endblock %}
+
+{% block page_content %}
+
+<div class="editor-page">
+
+    <div class="editor-top">
+        <div>
+            <h2>Editor de Fluxo</h2>
+            <p>Monte a lógica da automação do seu atendimento</p>
+        </div>
+
+        <div class="editor-actions">
+            <a href="{{ url_for('fluxos') }}" class="flow-action">Voltar</a>
+            <button type="button" class="flow-action primary" onclick="salvarFluxoCompleto()">Salvar fluxo</button>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('editar_fluxo', fluxo_id=fluxo.id) }}">
+        <div class="editor-config" style="margin-bottom: 18px;">
+            <h3>Dados do fluxo</h3>
+
+            <div class="config-card">
+                <label>Nome do fluxo</label>
+                <input type="text" name="nome" value="{{ fluxo.nome }}" required>
+
+                <label>Descrição</label>
+                <textarea name="descricao" rows="4">{{ fluxo.descricao or '' }}</textarea>
+
+                <label>Tipo de gatilho</label>
+                <select name="tipo_gatilho">
+                    <option value="" {% if not fluxo.tipo_gatilho %}selected{% endif %}>Manual</option>
+                    <option value="palavra_chave" {% if fluxo.tipo_gatilho == 'palavra_chave' %}selected{% endif %}>Palavra-chave</option>
+                    <option value="menu" {% if fluxo.tipo_gatilho == 'menu' %}selected{% endif %}>Menu</option>
+                    <option value="boas_vindas" {% if fluxo.tipo_gatilho == 'boas_vindas' %}selected{% endif %}>Boas-vindas</option>
+                </select>
+
+                <label>Valor do gatilho</label>
+                <input
+                    type="text"
+                    name="gatilho_valor"
+                    value="{{ fluxo.gatilho_valor or '' }}"
+                    placeholder="Ex: orçamento, menu, oi"
+                >
+
+                <label>Status</label>
+                <select name="ativo">
+                    <option value="1" {% if fluxo.ativo == 1 %}selected{% endif %}>Ativo</option>
+                    <option value="0" {% if fluxo.ativo == 0 %}selected{% endif %}>Inativo</option>
+                </select>
+
+                <button type="submit" class="flow-action primary full">Salvar dados do fluxo</button>
+            </div>
+        </div>
+    </form>
+
+    <div class="editor-layout">
+
+        <div class="editor-sidebar">
+            <h3>Adicionar bloco</h3>
+
+            <div class="editor-block-list">
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="mensagem">
+                    <input type="hidden" name="titulo" value="Mensagem">
+                    <input type="hidden" name="conteudo" value="Nova mensagem do fluxo">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Mensagem</button>
+                </form>
+
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="pergunta">
+                    <input type="hidden" name="titulo" value="Pergunta">
+                    <input type="hidden" name="conteudo" value="Digite sua pergunta aqui">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Pergunta</button>
+                </form>
+
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="multipla_escolha">
+                    <input type="hidden" name="titulo" value="Múltipla escolha">
+                    <input type="hidden" name="conteudo" value="1 - Opção 1&#10;2 - Opção 2">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Múltipla escolha</button>
+                </form>
+
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="coletar_nome">
+                    <input type="hidden" name="titulo" value="Coletar nome">
+                    <input type="hidden" name="conteudo" value="Qual é o seu nome?">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Coletar nome</button>
+                </form>
+
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="coletar_telefone">
+                    <input type="hidden" name="titulo" value="Coletar telefone">
+                    <input type="hidden" name="conteudo" value="Qual é o seu telefone?">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Coletar telefone</button>
+                </form>
+
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="acao">
+                    <input type="hidden" name="titulo" value="Ação">
+                    <input type="hidden" name="conteudo" value="Executar ação">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Ação</button>
+                </form>
+
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="transferir_humano">
+                    <input type="hidden" name="titulo" value="Transferir para humano">
+                    <input type="hidden" name="conteudo" value="Vou transferir você para um atendente.">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Transferir para humano</button>
+                </form>
+
+                <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="tipo_bloco" value="encerrar">
+                    <input type="hidden" name="titulo" value="Encerrar atendimento">
+                    <input type="hidden" name="conteudo" value="Atendimento encerrado 💜">
+                    <button type="submit" class="editor-mini-block" style="width: 100%;">Encerrar atendimento</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="editor-canvas" id="editor-canvas">
+            {% if blocos %}
+                {% for bloco in blocos %}
+                <div class="flow-node bloco-item"
+                     data-id="{{ bloco.id }}"
+                     data-tipo="{{ bloco.tipo_bloco }}"
+                     data-proximo="{{ bloco.proximo_bloco_id or '' }}">
+
+                    <div class="flow-node-tag{% if bloco.tipo_bloco == 'multipla_escolha' %} choice{% endif %}{% if bloco.tipo_bloco in ['acao', 'transferir_humano', 'encerrar'] %} action{% endif %}">
+                        {{ bloco.tipo_bloco|replace('_', ' ')|title }}
+                    </div>
+
+                    <h3>{{ bloco.titulo }}</h3>
+
+                    <p class="bloco-conteudo-preview" style="white-space: pre-line;">
+                        {{ bloco.conteudo or 'Sem conteúdo' }}
+                    </p>
+
+                    <div class="flow-actions" style="margin-top: 14px;">
+                        <button type="button" class="flow-action" onclick="selecionarBloco({{ bloco.id }})">Editar</button>
+
+                        <form method="POST" action="{{ url_for('excluir_bloco_fluxo', fluxo_id=fluxo.id, bloco_id=bloco.id) }}" class="inline-form">
+                            <button type="submit"
+                               class="flow-action danger"
+                               onclick="return confirm('Deseja excluir este bloco?');">
+                                Excluir
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                {% if not loop.last %}
+                <div class="flow-line"></div>
+                {% endif %}
+                {% endfor %}
+            {% else %}
+                <div class="flow-node">
+                    <div class="flow-node-tag">Vazio</div>
+                    <h3>Nenhum bloco ainda</h3>
+                    <p>Adicione blocos na lateral para começar a montar o fluxo.</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="editor-config">
+            <h3>Configuração do bloco</h3>
+
+            {% if blocos %}
+            <div class="config-card" id="config-bloco-card">
+                <label>Bloco selecionado</label>
+                <select id="bloco-select">
+                    {% for bloco in blocos %}
+                    <option value="{{ bloco.id }}">
+                        #{{ bloco.ordem }} — {{ bloco.titulo }}
+                    </option>
+                    {% endfor %}
+                </select>
+
+                <label>Título do bloco</label>
+                <input type="text" id="bloco-titulo">
+
+                <label>Tipo do bloco</label>
+                <select id="bloco-tipo">
+                    <option value="mensagem">Mensagem</option>
+                    <option value="pergunta">Pergunta</option>
+                    <option value="multipla_escolha">Múltipla escolha</option>
+                    <option value="coletar_nome">Coletar nome</option>
+                    <option value="coletar_telefone">Coletar telefone</option>
+                    <option value="acao">Ação</option>
+                    <option value="transferir_humano">Transferir para humano</option>
+                    <option value="encerrar">Encerrar atendimento</option>
+                </select>
+
+                <label>Conteúdo</label>
+                <textarea id="bloco-conteudo" rows="7"></textarea>
+
+                <label>Próximo bloco</label>
+                <select id="bloco-proximo">
+                    <option value="">Encerrar fluxo / sem próximo</option>
+                    {% for bloco in blocos %}
+                    <option value="{{ bloco.id }}">
+                        #{{ bloco.ordem }} — {{ bloco.titulo }}
+                    </option>
+                    {% endfor %}
+                </select>
+
+                <div id="config-multipla-escolha" class="config-extra" style="display: none;">
+                    <label>Opções da múltipla escolha</label>
+                    <div id="opcoes-multipla-lista" class="options-editor-list"></div>
+                    <button type="button" class="flow-action small" onclick="adicionarOpcaoMultiplaEscolha()">
+                        Adicionar opção
+                    </button>
+                    <p class="config-hint">
+                        Cada opção pode ter texto exibido, gatilho esperado e destino próprio.
+                    </p>
+                </div>
+
+                <div id="config-acao" class="config-extra" style="display: none;">
+                    <label>Ação do bloco</label>
+                    <select id="bloco-acao">
+                        <option value="">Nenhuma ação</option>
+                        <option value="salvar_agendamento">Salvar agendamento</option>
+                    </select>
+                    <p class="config-hint">
+                        Use esse bloco para executar ações internas antes de seguir para o próximo passo.
+                    </p>
+                </div>
+
+                <button type="button" class="flow-action primary full" onclick="salvarFluxoCompleto()">
+                    Salvar alterações
+                </button>
+            </div>
+            {% else %}
+            <div class="config-card">
+                <p style="font-size: 14px; color: var(--text-soft);">
+                    Adicione um bloco para começar a configurar esse fluxo.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+
+    </div>
+
+</div>
+
+{% if blocos %}
+<script>
+    const blocosFluxo = {{ blocos|tojson|safe }};
+    let blocoAtualId = blocosFluxo.length ? parseInt(blocosFluxo[0].id) : null;
+
+    function buscarBlocoPorId(id) {
+        id = parseInt(id);
+        return blocosFluxo.find(b => parseInt(b.id) === id);
+    }
+
+    function obterNomeTipo(tipo) {
+        const nomes = {
+            mensagem: "Mensagem",
+            pergunta: "Pergunta",
+            multipla_escolha: "Múltipla escolha",
+            coletar_nome: "Coletar nome",
+            coletar_telefone: "Coletar telefone",
+            acao: "Ação",
+            transferir_humano: "Transferir para humano",
+            encerrar: "Encerrar atendimento"
+        };
+        return nomes[tipo] || "Bloco";
+    }
+
+    function atualizarPreviewDoBloco(bloco) {
+        const card = document.querySelector(`.bloco-item[data-id="${bloco.id}"]`);
+        if (!card) return;
+
+        const tag = card.querySelector(".flow-node-tag");
+        const titulo = card.querySelector("h3");
+        const conteudo = card.querySelector(".bloco-conteudo-preview");
+
+        if (tag) {
+            tag.textContent = obterNomeTipo(bloco.tipo_bloco);
+            tag.className = "flow-node-tag";
+
+            if (bloco.tipo_bloco === "multipla_escolha") {
+                tag.classList.add("choice");
+            }
+
+            if (["acao", "transferir_humano", "encerrar"].includes(bloco.tipo_bloco)) {
+                tag.classList.add("action");
+            }
+        }
+
+        if (titulo) {
+            titulo.textContent = bloco.titulo || "Sem título";
+        }
+
+        if (conteudo) {
+            let preview = bloco.conteudo || "Sem conteúdo";
+
+            if (bloco.tipo_bloco === "multipla_escolha") {
+                const opcoes = (bloco.config && Array.isArray(bloco.config.opcoes)) ? bloco.config.opcoes : [];
+                if (opcoes.length) {
+                    const resumoOpcoes = opcoes.map(opcao => {
+                        const gatilho = opcao.gatilho || "sem gatilho";
+                        const texto = opcao.texto || "sem texto";
+                        return `${gatilho}: ${texto}`;
+                    });
+                    preview = `${preview}\n\n${resumoOpcoes.join("\n")}`;
+                }
+            }
+
+            if (bloco.tipo_bloco === "acao" && bloco.config && bloco.config.acao) {
+                preview = `${preview}\n\nAção: ${bloco.config.acao}`;
+            }
+
+            conteudo.textContent = preview;
+        }
+    }
+
+    function atualizarTextoDosSelects() {
+        const selectPrincipal = document.getElementById("bloco-select");
+        const selectProximo = document.getElementById("bloco-proximo");
+
+        if (selectPrincipal) {
+            Array.from(selectPrincipal.options).forEach(option => {
+                const bloco = buscarBlocoPorId(option.value);
+                if (bloco) {
+                    const ordem = bloco.ordem || (blocosFluxo.findIndex(b => parseInt(b.id) === parseInt(bloco.id)) + 1);
+                    option.textContent = `#${ordem} — ${bloco.titulo || "Sem título"}`;
+                }
+            });
+        }
+
+        if (selectProximo) {
+            Array.from(selectProximo.options).forEach(option => {
+                if (!option.value) return;
+                const bloco = buscarBlocoPorId(option.value);
+                if (bloco) {
+                    const ordem = bloco.ordem || (blocosFluxo.findIndex(b => parseInt(b.id) === parseInt(bloco.id)) + 1);
+                    option.textContent = `#${ordem} — ${bloco.titulo || "Sem título"}`;
+                }
+            });
+        }
+    }
+
+    function destacarBlocoSelecionado(blocoId) {
+        document.querySelectorAll(".bloco-item").forEach(item => {
+            item.style.outline = "none";
+            item.style.transform = "";
+        });
+
+        const alvo = document.querySelector(`.bloco-item[data-id="${blocoId}"]`);
+        if (alvo) {
+            alvo.style.outline = "2px solid #7b5ae0";
+            alvo.style.transform = "translateY(-2px)";
+        }
+    }
+
+    function preencherFormulario(bloco) {
+        document.getElementById("bloco-select").value = bloco.id;
+        document.getElementById("bloco-titulo").value = bloco.titulo || "";
+        document.getElementById("bloco-tipo").value = bloco.tipo_bloco || "mensagem";
+        document.getElementById("bloco-conteudo").value = bloco.conteudo || "";
+        document.getElementById("bloco-proximo").value = bloco.proximo_bloco_id || "";
+        document.getElementById("bloco-acao").value = (bloco.config && bloco.config.acao) || "";
+        renderizarConfigExtra(bloco);
+    }
+
+    function selecionarBloco(id) {
+        atualizarBlocoAtualNaMemoria();
+
+        const bloco = buscarBlocoPorId(id);
+        if (!bloco) return;
+
+        blocoAtualId = parseInt(bloco.id);
+
+        preencherFormulario(bloco);
+        destacarBlocoSelecionado(bloco.id);
+    }
+
+    function atualizarBlocoAtualNaMemoria() {
+        if (!blocoAtualId) return;
+
+        const bloco = buscarBlocoPorId(blocoAtualId);
+        if (!bloco) return;
+
+        bloco.titulo = document.getElementById("bloco-titulo").value.trim();
+        bloco.tipo_bloco = document.getElementById("bloco-tipo").value;
+        bloco.conteudo = document.getElementById("bloco-conteudo").value;
+        bloco.proximo_bloco_id = document.getElementById("bloco-proximo").value || null;
+        bloco.config = montarConfigDoFormulario(bloco.tipo_bloco);
+
+        atualizarPreviewDoBloco(bloco);
+        atualizarTextoDosSelects();
+    }
+
+    function montarConfigDoFormulario(tipoBloco) {
+        if (tipoBloco === "multipla_escolha") {
+            const opcoes = Array.from(document.querySelectorAll(".opcao-multipla-item")).map(item => ({
+                texto: item.querySelector('[data-campo="texto"]').value.trim(),
+                gatilho: item.querySelector('[data-campo="gatilho"]').value.trim(),
+                proximo_bloco_id: item.querySelector('[data-campo="proximo"]').value || null
+            })).filter(opcao => opcao.texto || opcao.gatilho || opcao.proximo_bloco_id);
+
+            return { opcoes };
+        }
+
+        if (tipoBloco === "acao") {
+            return { acao: document.getElementById("bloco-acao").value || "" };
+        }
+
+        return {};
+    }
+
+    function criarSelectProximoOpcao(valorAtual = "") {
+        const select = document.createElement("select");
+        select.dataset.campo = "proximo";
+
+        const optionVazia = document.createElement("option");
+        optionVazia.value = "";
+        optionVazia.textContent = "Sem destino específico";
+        select.appendChild(optionVazia);
+
+        blocosFluxo.forEach(bloco => {
+            const option = document.createElement("option");
+            option.value = bloco.id;
+            option.textContent = `#${bloco.ordem || bloco.id} — ${bloco.titulo || "Sem título"}`;
+            if (String(valorAtual) === String(bloco.id)) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+
+        select.addEventListener("change", atualizarBlocoAtualNaMemoria);
+        return select;
+    }
+
+    function adicionarOpcaoMultiplaEscolha(opcao = {}) {
+        const lista = document.getElementById("opcoes-multipla-lista");
+        if (!lista) return;
+
+        const item = document.createElement("div");
+        item.className = "opcao-multipla-item";
+
+        const inputTexto = document.createElement("input");
+        inputTexto.type = "text";
+        inputTexto.placeholder = "Texto da opção";
+        inputTexto.value = opcao.texto || "";
+        inputTexto.dataset.campo = "texto";
+        inputTexto.addEventListener("input", atualizarBlocoAtualNaMemoria);
+
+        const inputGatilho = document.createElement("input");
+        inputGatilho.type = "text";
+        inputGatilho.placeholder = "Gatilho esperado";
+        inputGatilho.value = opcao.gatilho || "";
+        inputGatilho.dataset.campo = "gatilho";
+        inputGatilho.addEventListener("input", atualizarBlocoAtualNaMemoria);
+
+        const selectProximo = criarSelectProximoOpcao(opcao.proximo_bloco_id || "");
+
+        const remover = document.createElement("button");
+        remover.type = "button";
+        remover.className = "flow-action danger small";
+        remover.textContent = "Remover";
+        remover.addEventListener("click", () => {
+            item.remove();
+            atualizarBlocoAtualNaMemoria();
+        });
+
+        item.appendChild(inputTexto);
+        item.appendChild(inputGatilho);
+        item.appendChild(selectProximo);
+        item.appendChild(remover);
+        lista.appendChild(item);
+    }
+
+    function renderizarConfigExtra(bloco) {
+        const tipo = bloco.tipo_bloco || "mensagem";
+        const areaMultipla = document.getElementById("config-multipla-escolha");
+        const areaAcao = document.getElementById("config-acao");
+        const listaOpcoes = document.getElementById("opcoes-multipla-lista");
+
+        areaMultipla.style.display = tipo === "multipla_escolha" ? "block" : "none";
+        areaAcao.style.display = tipo === "acao" ? "block" : "none";
+
+        if (listaOpcoes) {
+            listaOpcoes.innerHTML = "";
+        }
+
+        if (tipo === "multipla_escolha") {
+            const opcoes = (bloco.config && Array.isArray(bloco.config.opcoes) && bloco.config.opcoes.length)
+                ? bloco.config.opcoes
+                : [];
+
+            if (!opcoes.length) {
+                adicionarOpcaoMultiplaEscolha();
+            } else {
+                opcoes.forEach(opcao => adicionarOpcaoMultiplaEscolha(opcao));
+            }
+        }
+    }
+
+    async function salvarFluxoCompleto() {
+        atualizarBlocoAtualNaMemoria();
+
+        const payload = {
+            blocos: blocosFluxo.map((bloco, index) => ({
+                id: bloco.id,
+                tipo_bloco: bloco.tipo_bloco,
+                titulo: bloco.titulo,
+                conteudo: bloco.conteudo,
+                ordem: index + 1,
+                proximo_bloco_id: bloco.proximo_bloco_id ? parseInt(bloco.proximo_bloco_id) : null,
+                config: bloco.config || {}
+            }))
+        };
+
+        try {
+            const response = await fetch("{{ url_for('salvar_blocos_fluxo', fluxo_id=fluxo.id) }}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || ""
+                },
+                body: JSON.stringify(payload)
+            });
+
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (e) {
+                data = {};
+            }
+
+            if (response.ok && data.ok) {
+                alert("Fluxo salvo com sucesso 💜");
+                window.location.reload();
+            } else {
+                alert(data.erro || "Erro ao salvar o fluxo.");
+            }
+        } catch (error) {
+            alert("Erro ao salvar o fluxo.");
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+        const selectBloco = document.getElementById("bloco-select");
+        const campos = ["bloco-titulo", "bloco-tipo", "bloco-conteudo", "bloco-proximo", "bloco-acao"];
+
+        if (blocosFluxo.length) {
+            selecionarBloco(blocosFluxo[0].id);
+        }
+
+        if (selectBloco) {
+            selectBloco.addEventListener("change", function() {
+                selecionarBloco(this.value);
+            });
+        }
+
+        campos.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener("input", atualizarBlocoAtualNaMemoria);
+                el.addEventListener("change", atualizarBlocoAtualNaMemoria);
+            }
+        });
+
+        const selectTipo = document.getElementById("bloco-tipo");
+        if (selectTipo) {
+            selectTipo.addEventListener("change", function() {
+                const bloco = buscarBlocoPorId(blocoAtualId);
+                if (!bloco) return;
+                bloco.tipo_bloco = this.value;
+                bloco.config = montarConfigDoFormulario(this.value);
+                renderizarConfigExtra(bloco);
+                atualizarBlocoAtualNaMemoria();
+            });
+        }
+
+        document.querySelectorAll(".bloco-item").forEach(item => {
+            item.addEventListener("click", function(e) {
+                if (e.target.closest(".flow-action")) return;
+                selecionarBloco(this.dataset.id);
+            });
+        });
+
+        atualizarTextoDosSelects();
+    });
+</script>
+{% endif %}
+
+{% endblock %}

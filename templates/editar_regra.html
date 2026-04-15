@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}Editar Regra{% endblock %}
+
+{% block page_content %}
+<div class="page">
+    <div class="page-header">
+        <h1>Editar Regra</h1>
+        <p>Atualize a automação da sua resposta inteligente 💜</p>
+    </div>
+
+    <div class="card">
+        <h3>Dados da regra</h3>
+
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <div class="form-group">
+                <label>Nome da regra</label>
+                <input type="text" name="nome" value="{{ regra.nome }}" required>
+            </div>
+
+            <div class="form-group">
+                <label>Palavras-chave</label>
+                <input type="text" name="palavras_chave" value="{{ palavras_chave }}" required>
+                <small>Separe por vírgula.</small>
+            </div>
+
+            <div class="form-group">
+                <label>Prioridade</label>
+                <input type="number" name="prioridade" min="0" value="{{ regra.prioridade or 0 }}">
+                <small>Quanto maior, mais essa regra ganha preferência sobre outras.</small>
+            </div>
+
+            <div class="form-group">
+                <label>Resposta automática</label>
+                <textarea name="resposta" rows="4">{{ resposta }}</textarea>
+                <small>Você pode deixar a resposta vazia se quiser apenas iniciar um fluxo.</small>
+            </div>
+
+            <div class="form-group">
+                <label>Fluxo para iniciar</label>
+                <select name="fluxo_id">
+                    <option value="">Sem iniciar fluxo</option>
+                    {% for fluxo in fluxos %}
+                        <option value="{{ fluxo.id }}" {% if regra.fluxo_id == fluxo.id %}selected{% endif %}>
+                            {{ fluxo.nome }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Etapa para definir</label>
+                <input type="text" name="etapa_destino" value="{{ regra.etapa_destino or '' }}">
+                <small>Exemplo: pos_venda, aguardando_retorno, qualificado.</small>
+            </div>
+
+            <div class="form-group">
+                <label>Tag para aplicar</label>
+                <select name="tag_id">
+                    <option value="">Sem aplicar tag</option>
+                    {% for tag in tags %}
+                        <option value="{{ tag.id }}" {% if regra.tag_id == tag.id %}selected{% endif %}>
+                            {{ tag.nome }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group checkbox-group">
+                <label>
+                    <input type="checkbox" name="ativo" {% if regra.ativo %}checked{% endif %}>
+                    Regra ativa
+                </label>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button type="submit" class="btn-primary">Salvar alterações</button>
+                <a href="{{ url_for('regras') }}" class="btn-secondary">Voltar</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.page {
+    padding: 20px;
+}
+
+.page-header h1 {
+    font-size: 28px;
+    color: #3a3145;
+    margin-bottom: 6px;
+}
+
+.page-header p {
+    color: #7c5aa6;
+    margin-bottom: 20px;
+}
+
+.card {
+    background: #fff;
+    padding: 20px;
+    border-radius: 18px;
+    margin-bottom: 20px;
+    box-shadow: 0 10px 30px rgba(124, 90, 166, 0.10);
+}
+
+.card h3 {
+    margin-bottom: 16px;
+    color: #3a3145;
+}
+
+.form-group {
+    margin-bottom: 14px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 600;
+    color: #3a3145;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #eadff5;
+    border-radius: 12px;
+    background: #faf7ff;
+    outline: none;
+}
+
+.form-group textarea {
+    resize: vertical;
+}
+
+.form-group small {
+    display: block;
+    margin-top: 4px;
+    color: #7c5aa6;
+}
+
+.checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: auto;
+    accent-color: #7b5ae0;
+}
+
+.btn-primary,
+.btn-secondary {
+    display: inline-block;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    padding: 10px 16px;
+    border-radius: 12px;
+    font-weight: 600;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #e78fb3, #7b5ae0);
+    color: #fff;
+}
+
+.btn-secondary {
+    background: #f3eefb;
+    color: #6246ea;
+}
+</style>
+{% endblock %}

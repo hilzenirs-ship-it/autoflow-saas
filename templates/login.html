@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block page_content %}
+<div class="login-bg">
+    <div class="login-card">
+        <h1 class="logo">HilFlow Connect</h1>
+        <p class="subtitle">Central Inteligente de Atendimento</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div style="margin-bottom: 16px;">
+                    {% for category, message in messages %}
+                        <div style="
+                            background: #fff1f4;
+                            color: #7a3553;
+                            border: 1px solid #f1c7d4;
+                            padding: 12px 14px;
+                            border-radius: 14px;
+                            margin-bottom: 10px;
+                            font-size: 14px;
+                            text-align: left;
+                        ">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('login') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            
+            <input
+                type="email"
+                name="email"
+                placeholder="Seu e-mail"
+                value="{{ email or '' }}"
+                required
+                autocomplete="username"
+            >
+
+            <input
+                type="password"
+                name="senha"
+                placeholder="Sua senha"
+                required
+                autocomplete="current-password"
+            >
+
+            <button type="submit">Entrar</button>
+        </form>
+
+        <p style="margin-top: 18px; font-size: 14px;">
+            Não tem conta?
+            <a href="{{ url_for('cadastro') }}" style="color: #7b5ae0; font-weight: 600;">
+                Criar conta
+            </a>
+        </p>
+
+    </div>
+</div>
+{% endblock %}

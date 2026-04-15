@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Regras{% endblock %}
+
+{% block page_content %}
+<div class="rules-page">
+
+    <div class="rules-header">
+        <div>
+            <h2>Regras do Bot</h2>
+            <p>Automatize respostas inteligentes 💜</p>
+        </div>
+    </div>
+
+    <div class="rule-card">
+        <h3>Nova regra</h3>
+
+        <form method="POST" action="{{ url_for('regras.nova_regra') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="text" name="nome" placeholder="Nome da regra" required>
+
+            <input type="text" name="palavras_chave" placeholder="Palavras-chave (separadas por vírgula)" required>
+
+            <input type="number" name="prioridade" min="0" value="0" placeholder="Prioridade da regra">
+
+            <textarea name="resposta" rows="3" placeholder="Resposta automática (opcional se iniciar um fluxo)"></textarea>
+
+            <select name="fluxo_id">
+                <option value="">Sem iniciar fluxo</option>
+                {% for fluxo in fluxos %}
+                    <option value="{{ fluxo.id }}">{{ fluxo.nome }}</option>
+                {% endfor %}
+            </select>
+
+            <input type="text" name="etapa_destino" placeholder="Etapa para definir na conversa (opcional)">
+
+            <select name="tag_id">
+                <option value="">Sem aplicar tag</option>
+                {% for tag in tags %}
+                    <option value="{{ tag.id }}">{{ tag.nome }}</option>
+                {% endfor %}
+            </select>
+
+            <button type="submit" class="new-rule-btn">Salvar regra</button>
+        </form>
+    </div>
+
+    <div class="rules-grid">
+        {% if regras %}
+            {% for regra in regras %}
+            <div class="rule-card">
+
+                <div class="rule-top">
+                    <h3>{{ regra.nome }}</h3>
+
+                    {% if regra.ativo == 1 %}
+                        <span class="rule-badge active">Ativa</span>
+                    {% else %}
+                        <span class="rule-badge draft">Inativa</span>
+                    {% endif %}
+                </div>
+
+                <div class="rule-content">
+                    <p class="rule-label"><strong>Palavras-chave:</strong></p>
+                    <p class="rule-desc">
+                        {% if regra.palavras_chave %}
+                            {{ regra.palavras_chave }}
+                        {% else %}
+                            Nenhuma palavra-chave informada.
+                        {% endif %}
+                    </p>
+
+                    <p class="rule-label"><strong>Resposta automática:</strong></p>
+                    <p class="rule-response">
+                        {% if regra.resposta %}
+                            {{ regra.resposta }}
+                        {% else %}
+                            Nenhuma resposta cadastrada.
+                        {% endif %}
+                    </p>
+                </div>
+
+                {% if regra.tipo_regra %}
+                <div class="rule-meta">
+                    <span>Tipo: {{ regra.tipo_regra }}</span>
+                    <span>Prioridade: {{ regra.prioridade or 0 }}</span>
+                    <span>
+                        Fluxo:
+                        {% if regra.fluxo_nome %}
+                            {{ regra.fluxo_nome }}
+                        {% else %}
+                            Nenhum
+                        {% endif %}
+                    </span>
+                    <span>
+                        Etapa:
+                        {% if regra.etapa_destino %}
+                            {{ regra.etapa_destino }}
+                        {% else %}
+                            Nenhuma
+                        {% endif %}
+                    </span>
+                    <span>
+                        Tag:
+                        {% if regra.tag_id %}
+                            #{{ regra.tag_id }}
+                        {% else %}
+                            Nenhuma
+                        {% endif %}
+                    </span>
+                </div>
+                {% endif %}
+
+                <div class="rule-actions">
+                    <form method="POST" action="{{ url_for('toggle_regra', regra_id=regra.id) }}" class="inline-form">
+                        <button type="submit" class="rule-action">
+                            {% if regra.ativo == 1 %}
+                                Desativar
+                            {% else %}
+                                Ativar
+                            {% endif %}
+                        </button>
+                    </form>
+
+                    <a href="{{ url_for('editar_regra', regra_id=regra.id) }}" class="rule-action primary">
+                        Editar
+                    </a>
+
+                    <form method="POST" action="{{ url_for('excluir_regra', regra_id=regra.id) }}" class="inline-form">
+                        <button type="submit"
+                            class="rule-action danger-soft"
+                            onclick="return confirm('Excluir essa regra?')">
+                            Excluir
+                        </button>
+                    </form>
+                </div>
+
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="rule-card">
+                <p>Nenhuma regra cadastrada ainda.</p>
+            </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<style>
+.rule-content {
+    margin-top: 14px;
+}
+
+.rule-label {
+    margin-bottom: 6px;
+    color: #3a3145;
+    font-size: 14px;
+}
+
+.rule-desc,
+.rule-response {
+    background: #faf7ff;
+    border: 1px solid #eadff5;
+    border-radius: 14px;
+    padding: 12px;
+    color: #5a4a6f;
+    line-height: 1.5;
+    margin-bottom: 14px;
+    white-space: pre-line;
+    word-break: break-word;
+}
+
+.rule-response {
+    background: #fffafd;
+}
+</style>
+{% endblock %}

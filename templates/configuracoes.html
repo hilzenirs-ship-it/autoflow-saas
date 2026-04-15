@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+
+{% block title %}Configurações{% endblock %}
+
+{% block page_content %}
+
+<div class="settings-page">
+
+    <div class="header settings-header">
+        <div>
+            <h2>Configurações</h2>
+            <p>Personalize o comportamento do seu sistema</p>
+        </div>
+    </div>
+
+    <div class="settings-grid">
+
+        <div class="settings-card">
+            <h3>Informações da empresa</h3>
+
+            <label>Nome da empresa</label>
+            <input type="text" value="HilFlow Connect">
+
+            <label>Nome exibido no atendimento</label>
+            <input type="text" value="HilFlow Connect">
+
+            <label>E-mail</label>
+            <input type="email" value="contato@hilflow.com">
+
+            {% if empresas_usuario %}
+                <hr style="margin: 14px 0; border: none; border-top: 1px solid #eee;">
+                <h4>Trocar contexto de empresa</h4>
+                <form method="POST" action="{{ url_for('trocar_empresa') }}">
+                    <label>Empresa ativa</label>
+                    <select name="empresa_id">
+                        {% for empresa in empresas_usuario %}
+                            <option value="{{ empresa.id }}" {% if empresa_id_logada == empresa.id %}selected{% endif %}>
+                                {{ empresa.nome_exibicao or empresa.nome_empresa }} ({{ empresa.papel }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="flow-action" style="margin-top:8px;">Trocar empresa</button>
+                </form>
+            {% endif %}
+        </div>
+
+        <div class="settings-card">
+            <h3>Horário de atendimento</h3>
+
+            <label>Início</label>
+            <input type="time" value="08:00">
+
+            <label>Fim</label>
+            <input type="time" value="18:00">
+
+            <label>Dias ativos</label>
+            <input type="text" value="Segunda a Sexta">
+
+            <hr style="margin: 14px 0; border: none; border-top: 1px solid #eee;">
+            <h4>Disponibilidade avançada (agendamento)</h4>
+            <form method="POST" action="{{ url_for('adicionar_disponibilidade') }}">
+                <label>Dia da semana</label>
+                <select name="dia_semana">
+                    <option value="0">Segunda</option>
+                    <option value="1">Terça</option>
+                    <option value="2">Quarta</option>
+                    <option value="3">Quinta</option>
+                    <option value="4">Sexta</option>
+                    <option value="5">Sábado</option>
+                    <option value="6">Domingo</option>
+                </select>
+                <label>Hora início</label>
+                <input type="time" name="hora_inicio" required>
+                <label>Hora fim</label>
+                <input type="time" name="hora_fim" required>
+                <button type="submit" class="flow-action" style="margin-top:8px;">Adicionar disponibilidade</button>
+            </form>
+            {% if disponibilidade %}
+                <div style="margin-top: 10px;">
+                    {% for item in disponibilidade %}
+                        <p style="font-size: 13px; color: #5a4a6f; margin: 4px 0;">
+                            Dia {{ item.dia_semana }}: {{ item.hora_inicio }} - {{ item.hora_fim }}
+                        </p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="settings-card">
+            <h3>Mensagens automáticas</h3>
+
+            <label>Mensagem de boas-vindas</label>
+            <textarea rows="4">Olá, seja bem-vindo(a). Como posso te ajudar hoje?</textarea>
+
+            <label>Mensagem fora do horário</label>
+            <textarea rows="4">No momento estamos fora do horário de atendimento. Assim que possível responderemos você.</textarea>
+        </div>
+
+        <div class="settings-card">
+            <h3>Comportamento da automação</h3>
+
+            <label>Bot ativo</label>
+            <select>
+                <option>Sim</option>
+                <option>Não</option>
+            </select>
+
+            <label>Pausar bot ao assumir conversa</label>
+            <select>
+                <option>Sim</option>
+                <option>Não</option>
+            </select>
+
+            <label>Retomar automação ao encerrar</label>
+            <select>
+                <option>Sim</option>
+                <option>Não</option>
+            </select>
+
+            <hr style="margin: 14px 0; border: none; border-top: 1px solid #eee;">
+            <h4>Gestão de membros da empresa</h4>
+            <form method="POST" action="{{ url_for('adicionar_membro_empresa') }}">
+                <label>E-mail do usuário</label>
+                <input type="email" name="email" placeholder="usuario@email.com" required>
+                <label>Papel</label>
+                <select name="papel">
+                    <option value="membro">Membro</option>
+                    <option value="admin">Admin</option>
+                    <option value="owner">Owner</option>
+                </select>
+                <button type="submit" class="flow-action" style="margin-top:8px;">Adicionar membro</button>
+            </form>
+            {% if membros_empresa %}
+                <div style="margin-top: 10px;">
+                    {% for membro in membros_empresa %}
+                        <p style="font-size: 13px; color: #5a4a6f; margin: 4px 0;">
+                            {{ membro.nome }} ({{ membro.email }}) - {{ membro.papel }}
+                        </p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="settings-card">
+            <h3>Integrações de canais</h3>
+            <form method="POST" action="{{ url_for('salvar_integracao_canal') }}">
+                <label>Canal</label>
+                <select name="canal">
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="instagram">Instagram</option>
+                </select>
+
+                <label>Nome interno</label>
+                <input type="text" name="nome" placeholder="Ex.: WhatsApp principal">
+
+                <label>Status</label>
+                <select name="status">
+                    <option value="rascunho">Rascunho</option>
+                    <option value="ativo">Ativo</option>
+                    <option value="pausado">Pausado</option>
+                </select>
+
+                <label>Access Token</label>
+                <input type="password" name="access_token" placeholder="Cole o token somente ao criar ou atualizar">
+
+                <label>Phone Number ID / Página</label>
+                <input type="text" name="phone_number_id" placeholder="ID do número ou página">
+
+                <label>Business Account ID</label>
+                <input type="text" name="business_account_id" placeholder="ID da conta business">
+
+                <label>Instagram Account ID</label>
+                <input type="text" name="instagram_account_id" placeholder="Opcional para Instagram">
+
+                <label>Configuração JSON</label>
+                <textarea name="config_json" rows="3" placeholder='{"verify_token":"seu-token","app_secret":"opcional","graph_version":"v20.0"}'></textarea>
+
+                <button type="submit" class="flow-action" style="margin-top:8px;">Salvar integração</button>
+            </form>
+
+            {% if integracoes %}
+                <div class="integration-list">
+                    {% for integracao in integracoes %}
+                        <div class="integration-item">
+                            <strong>{{ integracao.nome or integracao.canal|title }}</strong>
+                            <p>{{ integracao.canal|title }} - {{ integracao.status }}</p>
+                            <small>Webhook: /webhooks/{{ integracao.canal }}/{{ integracao.webhook_token }}</small>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="settings-card">
+            <h3>Plano e limites SaaS</h3>
+            {% if plano_empresa %}
+                <p><strong>Plano:</strong> {{ plano_empresa.plano_nome or 'Starter' }}</p>
+                <p><strong>Status:</strong> {{ plano_empresa.status or 'ativo' }}</p>
+                <div class="saas-limit-grid">
+                    <div>
+                        <small>Conversas</small>
+                        <strong>{{ plano_empresa.limite_conversas or 'Ilimitado' }}</strong>
+                    </div>
+                    <div>
+                        <small>Mensagens</small>
+                        <strong>{{ plano_empresa.limite_mensagens or 'Ilimitado' }}</strong>
+                    </div>
+                    <div>
+                        <small>Atendentes</small>
+                        <strong>{{ plano_empresa.limite_atendentes or 'Ilimitado' }}</strong>
+                    </div>
+                    <div>
+                        <small>Integrações</small>
+                        <strong>{{ plano_empresa.limite_integracoes or 'Ilimitado' }}</strong>
+                    </div>
+                </div>
+            {% else %}
+                <p>Plano padrão preparado para evolução SaaS.</p>
+            {% endif %}
+        </div>
+
+    </div>
+
+    <div class="settings-actions">
+        <button class="flow-action">Cancelar</button>
+        <button class="flow-action primary">Salvar alterações</button>
+    </div>
+
+</div>
+
+{% endblock %}

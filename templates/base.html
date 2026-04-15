@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}HilFlow Connect{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=2">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+{% if request.path != '/' %}
+<div class="app">
+
+    <div class="sidebar">
+        <h2>HilFlow</h2>
+
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('conversas') }}">Conversas</a>
+        <a href="{{ url_for('contatos') }}">Contatos</a>
+
+        <a href="{{ url_for('agendamentos') }}">Agendamentos</a>
+
+        <a href="{{ url_for('fluxos') }}">Fluxos</a>
+        <a href="{{ url_for('regras') }}">Regras</a>
+        <a href="{{ url_for('metricas') }}">Métricas</a>
+        <a href="{{ url_for('configuracoes') }}">Configurações</a>
+    </div>
+
+    <div class="main">
+        <div class="topbar">
+            <h3>HilFlow Connect</h3>
+            <form method="POST" action="{{ url_for('logout') }}" class="inline-form">
+                <button type="submit" class="flow-action">Sair</button>
+            </form>
+        </div>
+
+        <div class="content">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-stack">
+                        {% for category, message in messages %}
+                            <div class="flash-message {{ category }}">
+                                {{ message }}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+{% endif %}
+
+{% block page_content %}{% endblock %}
+
+{% if request.path != '/' %}
+        </div>
+    </div>
+
+</div>
+{% endif %}
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content");
+        if (!csrfToken) return;
+
+        document.querySelectorAll('form[method="POST"], form[method="post"]').forEach(form => {
+            if (form.querySelector('input[name="csrf_token"]')) return;
+            const input = document.createElement("input");
+            input.type = "hidden";
+            input.name = "csrf_token";
+            input.value = csrfToken;
+            form.appendChild(input);
+        });
+    });
+</script>
+
+</body>
+</html>

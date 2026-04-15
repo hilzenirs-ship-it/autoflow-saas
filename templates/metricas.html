@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+
+{% block title %}Métricas{% endblock %}
+
+{% block page_content %}
+
+{% set total_mensagens = metricas.total_mensagens or 0 %}
+{% set mensagens_bot = metricas.mensagens_bot or 0 %}
+{% set mensagens_cliente = metricas.mensagens_cliente or 0 %}
+{% set mensagens_humano = metricas.mensagens_humano or 0 %}
+{% set mensagens_com_regra = metricas.mensagens_com_regra or 0 %}
+
+{% if total_mensagens > 0 %}
+    {% set taxa_automacao = ((mensagens_bot / total_mensagens) * 100) | round(0) | int %}
+    {% set taxa_regras = ((mensagens_com_regra / total_mensagens) * 100) | round(0) | int %}
+{% else %}
+    {% set taxa_automacao = 0 %}
+    {% set taxa_regras = 0 %}
+{% endif %}
+
+<div class="metrics-page metrics-page-pro">
+
+    <div class="header metrics-header">
+        <div>
+            <h2>Métricas</h2>
+            <p>Acompanhe o desempenho real da sua automação no HilFlow Connect</p>
+        </div>
+
+        <div class="metrics-filters">
+            <form method="GET" class="metrics-filter-form">
+                <select name="periodo_dias" class="metric-filter-select">
+                    <option value="7" {% if metricas.filtros.periodo_dias == '7' %}selected{% endif %}>Últimos 7 dias</option>
+                    <option value="15" {% if metricas.filtros.periodo_dias == '15' %}selected{% endif %}>Últimos 15 dias</option>
+                    <option value="30" {% if metricas.filtros.periodo_dias == '30' %}selected{% endif %}>Últimos 30 dias</option>
+                    <option value="90" {% if metricas.filtros.periodo_dias == '90' %}selected{% endif %}>Últimos 90 dias</option>
+                </select>
+
+                <select name="tipo_evento" class="metric-filter-select">
+                    <option value="">Todos os eventos</option>
+                    {% for tipo in metricas.tipos_evento_disponiveis %}
+                        <option value="{{ tipo }}" {% if metricas.filtros.tipo_evento == tipo %}selected{% endif %}>{{ tipo|replace('_', ' ')|title }}</option>
+                    {% endfor %}
+                </select>
+
+                <button type="submit" class="metric-filter active">Filtrar</button>
+                <a
+                    href="{{ url_for('exportar_metricas_eventos', periodo_dias=metricas.filtros.periodo_dias, tipo_evento=metricas.filtros.tipo_evento) }}"
+                    class="metric-filter">
+                    Exportar CSV
+                </a>
+            </form>
+        </div>
+    </div>
+
+    <div class="metrics-cards metrics-cards-pro">
+        <div class="metric-card highlight-card">
+            <div class="metric-card-top">
+                <span class="metric-tag">Operação</span>
+            </div>
+            <h3>Total de mensagens</h3>
+            <p class="metric-number">{{ total_mensagens }}</p>
+            <span class="metric-note">Volume total registrado nas conversas</span>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-card-top">
+                <span class="metric-tag soft">Automação</span>
+            </div>
+            <h3>Mensagens do bot</h3>
+            <p class="metric-number">{{ mensagens_bot }}</p>
+            <span class="metric-note">{{ taxa_automacao }}% do total de mensagens</span>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-card-top">
+                <span class="metric-tag soft">Regras</span>
+            </div>
+            <h3>Mensagens com regra</h3>
+            <p class="metric-number">{{ mensagens_com_regra }}</p>
+            <span class="metric-note">{{ taxa_regras }}% das mensagens tiveram regra vinculada</span>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-card-top">
+                <span class="metric-tag soft">Atendimento</span>
+            </div>
+            <h3>Conversas abertas</h3>
+            <p class="metric-number">{{ metricas.conversas_abertas or 0 }}</p>
+            <span class="metric-note">Conversas ativas no momento</span>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-card-top">
+                <span class="metric-tag soft">Conversão</span>
+            </div>
+            <h3>Agendamentos criados</h3>
+            <p class="metric-number">{{ metricas.total_agendamentos or 0 }}</p>
+            <span class="metric-note">Conversas que chegaram em agenda</span>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-card-top">
+                <span class="metric-tag soft">Tempo</span>
+            </div>
+            <h3>Tempo médio de resposta</h3>
+            <p class="metric-number">{{ metricas.tempo_medio_resposta_min or 0 }}m</p>
+            <span class="metric-note">Entre mensagem do cliente e próxima resposta</span>
+        </div>
+    </div>
+
+    <div class="metrics-grid metrics-grid-pro">
+
+        <div class="metrics-panel metrics-panel-large">
+            <div class="panel-header">
+                <div>
+                    <h3>Resumo operacional</h3>
+                    <p>Visão geral do funcionamento da central</p>
+                </div>
+            </div>
+
+            <div class="metric-list">
+                <div class="metric-row">
+                    <div>
+                        <strong>Total de contatos</strong>
+                        <p>Base cadastrada no sistema</p>
+                    </div>
+                    <span>{{ metricas.total_contatos or 0 }}</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Total de conversas</strong>
+                        <p>Atendimentos criados até agora</p>
+                    </div>
+                    <span>{{ metricas.total_conversas or 0 }}</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Mensagens do cliente</strong>
+                        <p>Mensagens recebidas dos contatos</p>
+                    </div>
+                    <span>{{ mensagens_cliente }}</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Mensagens humanas</strong>
+                        <p>Respostas feitas manualmente</p>
+                    </div>
+                    <span>{{ mensagens_humano }}</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Mensagens automáticas</strong>
+                        <p>Respostas enviadas pelo bot</p>
+                    </div>
+                    <span>{{ mensagens_bot }}</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Conversas encerradas</strong>
+                        <p>Atendimentos finalizados pela equipe</p>
+                    </div>
+                    <span>{{ metricas.conversas_fechadas or 0 }}</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Regras acionadas</strong>
+                        <p>Disparos registrados pelo motor de regras</p>
+                    </div>
+                    <span>{{ metricas.regras_acionadas or 0 }}</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Fluxos iniciados / finalizados</strong>
+                        <p>Movimento real dos fluxos automatizados</p>
+                    </div>
+                    <span>{{ metricas.fluxos_iniciados or 0 }} / {{ metricas.fluxos_finalizados or 0 }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="metrics-panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Saúde da automação</h3>
+                    <p>Indicadores rápidos do bot</p>
+                </div>
+            </div>
+
+            <div class="automation-health">
+                <div class="health-card">
+                    <small>Taxa de automação</small>
+                    <strong>{{ taxa_automacao }}%</strong>
+                    <p>
+                        {% if taxa_automacao >= 70 %}
+                            Sua automação está com desempenho forte.
+                        {% elif taxa_automacao >= 40 %}
+                            Sua automação já está ativa e com boa base.
+                        {% else %}
+                            Ainda há espaço para automatizar mais atendimentos.
+                        {% endif %}
+                    </p>
+                </div>
+
+                <div class="health-card">
+                    <small>Uso de regras</small>
+                    <strong>{{ taxa_regras }}%</strong>
+                    <p>
+                        {% if taxa_regras >= 60 %}
+                            As regras já estão sendo bem aproveitadas.
+                        {% elif taxa_regras >= 30 %}
+                            As regras estão funcionando, mas podem crescer.
+                        {% else %}
+                            Vale cadastrar mais regras estratégicas.
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="metrics-panel">
+        <div class="panel-header">
+            <div>
+                <h3>Desempenho por atendente</h3>
+                <p>Mensagens manuais e conversas vinculadas ao time</p>
+            </div>
+        </div>
+
+        <div class="metric-list">
+            {% if metricas.desempenho_atendentes %}
+                {% for atendente in metricas.desempenho_atendentes %}
+                    <div class="metric-row">
+                        <div>
+                            <strong>{{ atendente.nome }}</strong>
+                            <p>{{ atendente.conversas or 0 }} conversa(s) vinculada(s)</p>
+                        </div>
+                        <span>{{ atendente.mensagens or 0 }} msg</span>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <div class="insight-item">
+                    <strong>Nenhum atendente medido ainda</strong>
+                    <p>Assim que o time assumir e responder conversas, o desempenho individual aparecerá aqui.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="metrics-grid metrics-grid-bottom">
+
+        <div class="metrics-panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Leitura estratégica</h3>
+                    <p>O que esses números mostram hoje</p>
+                </div>
+            </div>
+
+            <div class="insight-list">
+                <div class="insight-item">
+                    <strong>Base de contatos</strong>
+                    <p>Você já tem <b>{{ metricas.total_contatos or 0 }}</b> contato(s) cadastrados para trabalhar campanhas, atendimento e automação.</p>
+                </div>
+
+                <div class="insight-item">
+                    <strong>Atuação do bot</strong>
+                    <p>O bot já enviou <b>{{ mensagens_bot }}</b> mensagem(ns), mostrando que sua automação já está funcionando na prática.</p>
+                </div>
+
+                <div class="insight-item">
+                    <strong>Uso das regras</strong>
+                    <p><b>{{ mensagens_com_regra }}</b> mensagem(ns) foram vinculadas diretamente a regras cadastradas, fortalecendo seu motor de atendimento inteligente.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="metrics-panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Próximos upgrades</h3>
+                    <p>Onde vale evoluir agora</p>
+                </div>
+            </div>
+
+            <div class="next-upgrade-list">
+                <div class="metric-row">
+                    <div>
+                        <strong>Mais regras estratégicas</strong>
+                        <p>Preço, agendamento, localização e pagamento</p>
+                    </div>
+                    <span>Prioridade</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Integração com WhatsApp</strong>
+                        <p>Levar esse motor para conversa real</p>
+                    </div>
+                    <span>Próximo nível</span>
+                </div>
+
+                <div class="metric-row">
+                    <div>
+                        <strong>Painel por regra</strong>
+                        <p>Descobrir qual regra mais converte</p>
+                    </div>
+                    <span>Expansão</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="metrics-panel">
+            <div class="panel-header">
+                <div>
+                    <h3>Tipos de evento mais frequentes</h3>
+                    <p>Leitura rápida do que mais movimentou a operação</p>
+                </div>
+            </div>
+
+            <div class="metric-list">
+                {% if metricas.top_tipos_evento %}
+                    {% for item in metricas.top_tipos_evento %}
+                        <div class="metric-row">
+                            <div>
+                                <strong>{{ item.tipo_evento|replace('_', ' ')|title }}</strong>
+                                <p>Ocorrências registradas recentemente</p>
+                            </div>
+                            <span>{{ item.total }}</span>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="insight-item">
+                        <strong>Nenhum evento ainda</strong>
+                        <p>Assim que o sistema registrar ações, os tipos mais frequentes aparecerão aqui.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+
+    <div class="metrics-panel">
+        <div class="panel-header">
+            <div>
+                <h3>Eventos recentes</h3>
+                <p>Rastro real do que a automação e o time fizeram por último</p>
+            </div>
+        </div>
+
+        <div class="metric-list">
+            {% if metricas.eventos_recentes %}
+                {% for evento in metricas.eventos_recentes %}
+                    <div class="metric-row">
+                        <div>
+                            <strong>{{ evento.tipo_evento|replace('_', ' ')|title }}</strong>
+                            <p>
+                                Referência:
+                                {% if evento.referencia_id %}
+                                    #{{ evento.referencia_id }}
+                                {% else %}
+                                    —
+                                {% endif %}
+                                {% if evento.resumo %}
+                                    • {{ evento.resumo }}
+                                {% endif %}
+                            </p>
+                        </div>
+                        <span>{{ evento.criado_em }}</span>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <div class="insight-item">
+                    <strong>Nenhum evento registrado ainda</strong>
+                    <p>As próximas ações de regra, fluxo, IA, agendamento e atendimento humano vão aparecer aqui.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Agendamentos{% endblock %}
+
+{% block page_content %}
+<div class="page">
+    <div class="page-header">
+        <h1>Agendamentos</h1>
+        <p>Veja os agendamentos confirmados pelo bot.</p>
+        <a href="{{ url_for('exportar_agendamentos') }}" class="flow-action secondary">Exportar CSV</a>
+    </div>
+
+    <div class="card">
+        {% if agendamentos %}
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Cliente</th>
+                            <th>Telefone</th>
+                            <th>Serviço</th>
+                            <th>Data</th>
+                            <th>Horário</th>
+                            <th>Status</th>
+                            <th>Criado em</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ag in agendamentos %}
+                        <tr>
+                            <td>{{ ag.contato_nome or "Sem nome" }}</td>
+                            <td>{{ ag.contato_telefone or "-" }}</td>
+                            <td>{{ ag.servico or "-" }}</td>
+                            <td>{{ ag.data or "-" }}</td>
+                            <td>{{ ag.horario or "-" }}</td>
+                            <td>{{ ag.status or "-" }}</td>
+                            <td>{{ ag.criado_em }}</td>
+                            <td>
+                                <div class="table-actions">
+                                    {% if ag.status != 'cancelado' %}
+                                        <form method="POST" action="{{ url_for('cancelar_agendamento', agendamento_id=ag.id) }}" class="inline-form">
+                                            <button type="submit" class="flow-action danger small" onclick="return confirm('Cancelar este agendamento?')">
+                                                Cancelar
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% if ag.status != 'cancelado' %}
+                        <tr>
+                            <td colspan="8">
+                                <form method="POST" action="{{ url_for('remarcar_agendamento', agendamento_id=ag.id) }}" class="reschedule-form">
+                                    <input type="text" name="servico" value="{{ ag.servico or '' }}" placeholder="Serviço">
+                                    <input type="text" name="data" value="{{ ag.data or '' }}" placeholder="Nova data" required>
+                                    <input type="text" name="horario" value="{{ ag.horario or '' }}" placeholder="Novo horário" required>
+                                    <button type="submit" class="flow-action">Remarcar</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <h3>Nenhum agendamento ainda</h3>
+                <p>Quando o bot confirmar um agendamento, ele vai aparecer aqui.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

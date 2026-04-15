@@ -1,0 +1,448 @@
+{% extends "base.html" %}
+
+{% block title %}Conversas{% endblock %}
+
+{% block page_content %}
+<div class="chat-page">
+
+    <div class="chat-list">
+        <div class="chat-list-header">
+            <h2>Conversas</h2>
+            <p>Atendimentos recentes</p>
+        </div>
+
+        <div class="queue-summary-grid">
+            <div class="queue-summary-card">
+                <small>Na fila</small>
+                <strong>{{ resumo_fila.total or 0 }}</strong>
+            </div>
+            <div class="queue-summary-card">
+                <small>Em atendimento</small>
+                <strong>{{ resumo_fila.em_atendimento or 0 }}</strong>
+            </div>
+            <div class="queue-summary-card">
+                <small>Aguardando cliente</small>
+                <strong>{{ resumo_fila.aguardando_cliente or 0 }}</strong>
+            </div>
+            <div class="queue-summary-card">
+                <small>No bot</small>
+                <strong>{{ resumo_fila.no_bot or 0 }}</strong>
+            </div>
+        </div>
+
+        <form method="GET" class="chat-filters">
+            <input type="text" name="busca" value="{{ filtros_conversa.busca or '' }}" placeholder="Buscar contato ou telefone">
+
+            <select name="status">
+                <option value="">Todos os status</option>
+                <option value="aberta" {% if filtros_conversa.status == 'aberta' %}selected{% endif %}>Abertas</option>
+                <option value="fechada" {% if filtros_conversa.status == 'fechada' %}selected{% endif %}>Fechadas</option>
+            </select>
+
+            <select name="bot">
+                <option value="">Bot ativo ou pausado</option>
+                <option value="ativo" {% if filtros_conversa.bot == 'ativo' %}selected{% endif %}>Bot ativo</option>
+                <option value="pausado" {% if filtros_conversa.bot == 'pausado' %}selected{% endif %}>Bot pausado</option>
+            </select>
+
+            <select name="tag_id">
+                <option value="">Todas as tags</option>
+                {% for tag in tags %}
+                    <option value="{{ tag.id }}" {% if filtros_conversa.tag_id == tag.id %}selected{% endif %}>{{ tag.nome }}</option>
+                {% endfor %}
+            </select>
+
+            <select name="atendimento">
+                <option value="">Toda a operação</option>
+                <option value="bot" {% if filtros_conversa.atendimento == 'bot' %}selected{% endif %}>No bot</option>
+                <option value="em_atendimento" {% if filtros_conversa.atendimento == 'em_atendimento' %}selected{% endif %}>Em atendimento humano</option>
+                <option value="aguardando_cliente" {% if filtros_conversa.atendimento == 'aguardando_cliente' %}selected{% endif %}>Aguardando cliente</option>
+            </select>
+
+            <label class="chat-filter-check">
+                <input type="checkbox" name="somente_humano" value="1" {% if filtros_conversa.somente_humano %}checked{% endif %}>
+                <span>Somente assumidas</span>
+            </label>
+
+            <button type="submit" class="flow-action">Filtrar</button>
+        </form>
+
+        {% if conversas %}
+            {% for item in conversas %}
+                <a href="{{ url_for('ver_conversa', conversa_id=item.id, busca=filtros_conversa.busca, status=filtros_conversa.status, bot=filtros_conversa.bot, tag_id=filtros_conversa.tag_id, atendimento=filtros_conversa.atendimento, somente_humano=1 if filtros_conversa.somente_humano else None) }}"
+                   class="chat-item {% if conversa and item.id == conversa.id %}active{% endif %}"
+                   style="text-decoration: none;">
+                    <div class="chat-item-top">
+                        <h4>{{ item.contato_nome or 'Sem nome' }}</h4>
+
+                        <span class="chat-item-status {% if item.status == 'aberta' %}open{% else %}closed{% endif %}">
+                            {% if item.status == 'aberta' %}Aberta{% else %}Fechada{% endif %}
+                        </span>
+                    </div>
+
+                    <p>{{ item.ultima_mensagem or 'Sem mensagens ainda' }}</p>
+
+                    <div class="chat-item-tags">
+                        <span class="mini-badge flow atendimento-{{ item.atendimento_status }}">
+                            {{ item.atendimento_status_label }}
+                        </span>
+                    </div>
+
+                    <div class="chat-item-queue-note">
+                        {{ item.proxima_acao_label }}
+                    </div>
+
+                    <div class="chat-item-bottom">
+                        <small>{{ item.contato_telefone or 'Sem telefone' }}</small>
+                        <span>{{ item.atualizada_em }}</span>
+                    </div>
+                </a>
+            {% endfor %}
+        {% else %}
+            <div class="chat-item">
+                <h4>Nenhuma conversa</h4>
+                <p>Crie um contato para iniciar.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="chat-window">
+        {% if conversa %}
+            <div class="chat-window-header chat-window-header-pro">
+                <div class="chat-window-header-main">
+                    <h3>{{ conversa.contato_nome or 'Sem nome' }}</h3>
+                    <p>
+                        {% if conversa.status == 'aberta' %}
+                            Atendimento em andamento
+                        {% else %}
+                            Conversa encerrada
+                        {% endif %}
+                    </p>
+
+                    <div class="chat-status-badges">
+                        <span class="mini-badge status {% if conversa.status == 'aberta' %}open{% else %}closed{% endif %}">
+                            {% if conversa.status == 'aberta' %}Aberta{% else %}Fechada{% endif %}
+                        </span>
+
+                        <span class="mini-badge bot {% if conversa.bot_ativo == 1 %}active{% else %}paused{% endif %}">
+                            Bot {% if conversa.bot_ativo == 1 %}ativo{% else %}pausado{% endif %}
+                        </span>
+
+                        {% if resumo_conversa and resumo_conversa.etapa_atual %}
+                            <span class="mini-badge flow">
+                                Etapa: {{ resumo_conversa.etapa_atual }}
+                            </span>
+                        {% endif %}
+
+                        {% if conversa.atendente_nome %}
+                            <span class="mini-badge flow">
+                                Atendente: {{ conversa.atendente_nome }}
+                            </span>
+                        {% endif %}
+
+                        <span class="mini-badge flow atendimento-{{ conversa.atendimento_status }}">
+                            {{ conversa.atendimento_status_label }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="chat-header-actions">
+                    {% if conversa.bot_ativo == 1 %}
+                        <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=0) }}" class="inline-form">
+                            <button type="submit" class="small-btn">Pausar bot</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('assumir_conversa', conversa_id=conversa.id) }}" class="inline-form">
+                            <button type="submit" class="small-btn">Assumir atendimento</button>
+                        </form>
+                    {% else %}
+                        <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=1) }}" class="inline-form">
+                            <button type="submit" class="small-btn">Ativar bot</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('marcar_conversa_aguardando_cliente', conversa_id=conversa.id) }}" class="inline-form">
+                            <button type="submit" class="small-btn">Aguardar cliente</button>
+                        </form>
+                        {% if conversa.atendimento_status == 'aguardando_cliente' %}
+                            <form method="POST" action="{{ url_for('retomar_atendimento_conversa', conversa_id=conversa.id) }}" class="inline-form">
+                                <button type="submit" class="small-btn">Retomar atendimento</button>
+                            </form>
+                        {% endif %}
+                        {% if conversa.atendente_nome %}
+                            <form method="POST" action="{{ url_for('devolver_conversa_ao_bot', conversa_id=conversa.id) }}" class="inline-form">
+                                <button type="submit" class="small-btn">Devolver ao bot</button>
+                            </form>
+                        {% endif %}
+                    {% endif %}
+
+                    {% if conversa.status == 'aberta' %}
+                        <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='fechada') }}" class="inline-form">
+                            <button type="submit" class="small-btn">Encerrar</button>
+                        </form>
+                    {% else %}
+                        <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='aberta') }}" class="inline-form">
+                            <button type="submit" class="small-btn">Reabrir</button>
+                        </form>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="messages">
+                {% if mensagens %}
+                    {% for mensagem in mensagens %}
+                        <div class="message-wrapper {% if mensagem.remetente_tipo == 'cliente' %}received-wrap{% else %}sent-wrap{% endif %}">
+                            <div class="message {% if mensagem.remetente_tipo == 'cliente' %}received{% else %}sent{% endif %} {{ mensagem.remetente_tipo }}">
+
+                                <div class="message-top">
+                                    {% if mensagem.remetente_tipo == 'cliente' %}
+                                        <span class="message-badge cliente">Cliente</span>
+                                    {% elif mensagem.remetente_tipo == 'bot' %}
+                                        <span class="message-badge bot">Bot</span>
+                                    {% elif mensagem.remetente_tipo == 'humano' %}
+                                        <span class="message-badge humano">{{ mensagem.user_nome or 'Humano' }}</span>
+                                    {% else %}
+                                        <span class="message-badge">Mensagem</span>
+                                    {% endif %}
+                                    {% if mensagem.canal and mensagem.canal != 'interno' %}
+                                        <span class="message-badge canal">{{ mensagem.canal|title }}</span>
+                                    {% endif %}
+                                </div>
+
+                                <p>{{ mensagem.conteudo }}</p>
+
+                                {% if mensagem.remetente_tipo == 'bot' and mensagem.regra_nome %}
+                                    <div class="message-rule-info">
+                                        Respondido pela regra: <strong>{{ mensagem.regra_nome }}</strong>
+                                    </div>
+                                {% endif %}
+
+                                <span>{{ mensagem.criado_em }}</span>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="message-wrapper received-wrap">
+                        <div class="message received">
+                            <div class="message-top">
+                                <span class="message-badge cliente">Sistema</span>
+                            </div>
+                            <p>Nenhuma mensagem ainda.</p>
+                            <span>Agora</span>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+
+            {% if conversa.status == 'aberta' %}
+                <form method="POST"
+                      action="{{ url_for('enviar_mensagem', conversa_id=conversa.id) }}"
+                      class="chat-input"
+                      style="margin-bottom: 12px;">
+                    <input type="text" name="conteudo" placeholder="Digite sua resposta..." required>
+                    <button type="submit" class="send-btn">Enviar</button>
+                </form>
+
+                <form method="POST"
+                      action="{{ url_for('simular_mensagem_cliente', conversa_id=conversa.id) }}"
+                      class="chat-input chat-input-secondary">
+                    <input type="text" name="conteudo_cliente" placeholder="Simular mensagem do cliente..." required>
+                    <button type="submit" class="send-btn">Simular</button>
+                </form>
+            {% else %}
+                <div class="chat-closed-box">
+                    <p>Esta conversa está encerrada. Reabra para enviar novas mensagens ou simular atendimento.</p>
+                </div>
+            {% endif %}
+        {% else %}
+            <div class="chat-window-header">
+                <div>
+                    <h3>Nenhuma conversa selecionada</h3>
+                    <p>Escolha um contato para começar</p>
+                </div>
+            </div>
+
+            <div class="messages">
+                <div class="message-wrapper received-wrap">
+                    <div class="message received">
+                        <div class="message-top">
+                            <span class="message-badge cliente">Sistema</span>
+                        </div>
+                        <p>Abra uma conversa existente ou crie uma nova a partir de um contato.</p>
+                        <span>Agora</span>
+                    </div>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="chat-details">
+        {% if conversa %}
+            <div class="details-card">
+                <h3>Contato</h3>
+                <p><strong>Nome:</strong> {{ conversa.contato_nome or 'Sem nome' }}</p>
+                <p><strong>Telefone:</strong> {{ conversa.contato_telefone or '-' }}</p>
+                <p><strong>Status:</strong> {{ conversa.status }}</p>
+                <p><strong>Bot:</strong> {% if conversa.bot_ativo == 1 %}Ativo{% else %}Pausado{% endif %}</p>
+                <p><strong>Atendente:</strong> {{ conversa.atendente_nome or '-' }}</p>
+                <p><strong>Operação:</strong> {{ conversa.atendimento_status_label }}</p>
+                <p><strong>Início:</strong> {{ conversa.iniciada_em or '-' }}</p>
+                <p><strong>Última atualização:</strong> {{ conversa.atualizada_em or '-' }}</p>
+            </div>
+
+            <div class="details-card">
+                <h3>Atendentes na conversa</h3>
+                {% if conversa.atendentes %}
+                    <div class="conversation-history-list">
+                        {% for atendente in conversa.atendentes %}
+                            <div class="conversation-history-item">
+                                <strong>{{ atendente.nome_atendente or 'Atendente' }}</strong>
+                                <p>{{ atendente.email or 'Sem e-mail vinculado' }}</p>
+                                <small>{{ atendente.papel or 'atendente' }}</small>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p>Nenhum atendente vinculado ainda. Ao assumir ou responder, o atendente entra no historico.</p>
+                {% endif %}
+            </div>
+
+            <div class="details-card details-card-highlight">
+                <h3>Resumo da conversa</h3>
+
+                <div class="conversation-stats">
+                    <div class="conversation-stat-box">
+                        <small>Total de mensagens</small>
+                        <strong>{{ resumo_conversa.total_mensagens or 0 }}</strong>
+                    </div>
+
+                    <div class="conversation-stat-box">
+                        <small>Respostas do bot</small>
+                        <strong>{{ resumo_conversa.mensagens_bot or 0 }}</strong>
+                    </div>
+
+                    <div class="conversation-stat-box">
+                        <small>Com regra</small>
+                        <strong>{{ resumo_conversa.mensagens_com_regra or 0 }}</strong>
+                    </div>
+                </div>
+
+                <div class="last-rule-box" style="margin-bottom: 12px;">
+                    <small>Última regra acionada</small>
+                    <div class="last-rule-value">
+                        {% if resumo_conversa.ultima_regra_nome %}
+                            {{ resumo_conversa.ultima_regra_nome }}
+                        {% else %}
+                            Nenhuma regra usada ainda
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="last-rule-box">
+                    <small>Etapa atual da automação</small>
+                    <div class="last-rule-value">
+                        {% if resumo_conversa.etapa_atual %}
+                            {{ resumo_conversa.etapa_atual }}
+                        {% else %}
+                            Sem fluxo ativo no momento
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="last-rule-box" style="margin-top: 12px;">
+                    <small>Estado operacional</small>
+                    <div class="last-rule-value">
+                        {{ resumo_conversa.atendimento_status_label }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="details-card">
+                <h3>Histórico operacional</h3>
+                {% if conversa.atendimento_historico %}
+                    <div class="conversation-history-list">
+                        {% for item in conversa.atendimento_historico %}
+                            <div class="conversation-history-item">
+                                <strong>{{ item.acao|replace('_', ' ')|title }}</strong>
+                                <p>{{ item.atendente or 'Sistema' }}</p>
+                                <small>{{ item.em }}</small>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p>Nenhuma movimentação operacional registrada ainda.</p>
+                {% endif %}
+            </div>
+
+            <div class="details-card">
+                <h3>Memória contextual</h3>
+                {% if conversa.memoria_cliente and conversa.memoria_cliente.resumo %}
+                    <p>{{ conversa.memoria_cliente.resumo }}</p>
+                {% else %}
+                    <p>A memória deste cliente será enriquecida conforme a conversa avançar, usando apenas informações reais do atendimento.</p>
+                {% endif %}
+            </div>
+
+            <div class="details-card">
+                <h3>Resumo da automação</h3>
+                <p>
+                    {% if conversa.bot_ativo == 1 %}
+                        O bot está ativo nesta conversa e pode responder automaticamente com base nas regras cadastradas, no menu automático e no fluxo inteligente de atendimento.
+                    {% else %}
+                        O bot está pausado nesta conversa. As respostas automáticas não serão enviadas até ser ativado novamente.
+                    {% endif %}
+                </p>
+            </div>
+
+            <div class="details-card">
+                <h3>Observações</h3>
+                <p>Conversa vinculada ao contato selecionado no HilFlow Connect.</p>
+                <p>Use a simulação para testar regras, menu automático, agendamento e continuidade do fluxo.</p>
+            </div>
+
+            <div class="details-card">
+                <h3>Ações rápidas</h3>
+
+                {% if conversa.bot_ativo == 1 %}
+                    <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=0) }}">
+                        <button type="submit" class="action-btn">Pausar bot</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('assumir_conversa', conversa_id=conversa.id) }}">
+                        <button type="submit" class="action-btn">Assumir atendimento</button>
+                    </form>
+                {% else %}
+                    <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=1) }}">
+                        <button type="submit" class="action-btn">Ativar bot</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('marcar_conversa_aguardando_cliente', conversa_id=conversa.id) }}">
+                        <button type="submit" class="action-btn secondary">Aguardar cliente</button>
+                    </form>
+                    {% if conversa.atendimento_status == 'aguardando_cliente' %}
+                        <form method="POST" action="{{ url_for('retomar_atendimento_conversa', conversa_id=conversa.id) }}">
+                            <button type="submit" class="action-btn">Retomar atendimento</button>
+                        </form>
+                    {% endif %}
+                    {% if conversa.atendente_nome %}
+                        <form method="POST" action="{{ url_for('devolver_conversa_ao_bot', conversa_id=conversa.id) }}">
+                            <button type="submit" class="action-btn">Devolver ao bot</button>
+                        </form>
+                    {% endif %}
+                {% endif %}
+
+                {% if conversa.status == 'aberta' %}
+                    <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='fechada') }}">
+                        <button type="submit" class="action-btn secondary">Encerrar</button>
+                    </form>
+                {% else %}
+                    <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='aberta') }}">
+                        <button type="submit" class="action-btn">Reabrir</button>
+                    </form>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="details-card">
+                <h3>Contato</h3>
+                <p>Selecione uma conversa para ver os detalhes.</p>
+            </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

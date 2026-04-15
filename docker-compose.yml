@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - SECRET_KEY=your-secret-key
+      - OPENAI_API_KEY=your-openai-key
+      - DATABASE_PATH=database/hilflow.db
+      - DEBUG=False
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./database:/app/database
+      - ./.env:/app/.env
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"

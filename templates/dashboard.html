@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block page_content %}
+<div class="dashboard">
+
+    <div class="header">
+        <h2>Dashboard</h2>
+        <p>Visão geral do seu atendimento</p>
+    </div>
+
+    <div class="cards">
+        <div class="card">
+            <h3>Total de Contatos</h3>
+            <p class="number">{{ total_contatos }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Total de Conversas</h3>
+            <p class="number">{{ total_conversas }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Conversas Abertas</h3>
+            <p class="number">{{ conversas_abertas }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Total de Mensagens</h3>
+            <p class="number">{{ total_mensagens }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Conversas Encerradas</h3>
+            <p class="number">{{ conversas_fechadas }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Agendamentos Criados</h3>
+            <p class="number">{{ agendamentos_criados }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Respostas Humanas</h3>
+            <p class="number">{{ mensagens_humano }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Integrações Ativas</h3>
+            <p class="number">{{ integracoes_ativas }}</p>
+        </div>
+    </div>
+
+    <div class="cards">
+        <div class="card">
+            <h3>Regras Acionadas</h3>
+            <p class="number">{{ regras_acionadas }}</p>
+        </div>
+
+        <div class="card">
+            <h3>Fluxos Iniciados</h3>
+            <p class="number">{{ fluxos_iniciados }}</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>Visão Geral</h3>
+        <canvas id="overviewChart" width="400" height="200"></canvas>
+    </div>
+
+    <div class="section">
+        <h3>Atividade recente</h3>
+        <div class="activity">
+            {% if atividade_recente %}
+                {% for item in atividade_recente %}
+                    <p><strong>{{ item.tipo_evento|replace('_', ' ')|title }}</strong> - {{ item.criado_em }}</p>
+                {% endfor %}
+            {% else %}
+                <p>Nenhuma atividade ainda</p>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const ctx = document.getElementById('overviewChart').getContext('2d');
+    const overviewChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['Contatos', 'Conversas', 'Abertas', 'Encerradas', 'Mensagens', 'Agendamentos'],
+            datasets: [{
+                label: 'Totais',
+                data: [{{ total_contatos }}, {{ total_conversas }}, {{ conversas_abertas }}, {{ conversas_fechadas }}, {{ total_mensagens }}, {{ agendamentos_criados }}],
+                backgroundColor: [
+                    'rgba(255, 99, 132, 0.2)',
+                    'rgba(54, 162, 235, 0.2)',
+                    'rgba(255, 205, 86, 0.2)',
+                    'rgba(75, 192, 192, 0.2)'
+                ],
+                borderColor: [
+                    'rgba(255, 99, 132, 1)',
+                    'rgba(54, 162, 235, 1)',
+                    'rgba(255, 205, 86, 1)',
+                    'rgba(75, 192, 192, 1)'
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

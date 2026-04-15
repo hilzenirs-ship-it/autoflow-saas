@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Fluxos{% endblock %}
+
+{% block page_content %}
+
+<div class="flows-page">
+
+    <div class="header flow-header">
+        <div>
+            <h2>Fluxos</h2>
+            <p>Crie e gerencie automações inteligentes</p>
+        </div>
+
+        <form method="POST" action="{{ url_for('novo_fluxo') }}" style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <input
+                type="text"
+                name="nome"
+                placeholder="Nome do novo fluxo"
+                required
+                style="width: 220px; margin-bottom: 0;"
+            >
+            <button type="submit" class="new-flow-btn">+ Novo fluxo</button>
+        </form>
+    </div>
+
+    {% if fluxos %}
+    <div class="flow-grid">
+
+        {% for fluxo in fluxos %}
+        <div class="flow-card">
+            <div class="flow-top">
+                <h3>{{ fluxo.nome }}</h3>
+
+                {% if fluxo.ativo == 1 %}
+                    <span class="flow-badge active">Ativo</span>
+                {% else %}
+                    <span class="flow-badge draft">Inativo</span>
+                {% endif %}
+            </div>
+
+            <p class="flow-desc">
+                {{ fluxo.descricao or "Esse fluxo ainda não possui descrição. Abra o editor para configurar a automação." }}
+            </p>
+
+            <div class="flow-meta">
+                <span>
+                    Gatilho:
+                    {% if fluxo.tipo_gatilho %}
+                        {{ fluxo.tipo_gatilho }}
+                        {% if fluxo.gatilho_valor %}
+                            — {{ fluxo.gatilho_valor }}
+                        {% endif %}
+                    {% else %}
+                        manual
+                    {% endif %}
+                </span>
+
+                <span>
+                    Blocos: {{ fluxo.total_blocos or 0 }}
+                </span>
+
+                <span>
+                    Atualizado em: {{ fluxo.atualizado_em }}
+                </span>
+            </div>
+
+            <div class="flow-actions">
+                <a href="{{ url_for('fluxo_editor', fluxo_id=fluxo.id) }}" class="flow-action primary">Editar</a>
+
+                <form method="POST" action="{{ url_for('duplicar_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                    <button type="submit" class="flow-action">Duplicar</button>
+                </form>
+
+                {% if fluxo.ativo == 1 %}
+                    <form method="POST" action="{{ url_for('toggle_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                        <button type="submit" class="flow-action danger-soft">Desativar</button>
+                    </form>
+                {% else %}
+                    <form method="POST" action="{{ url_for('toggle_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                        <button type="submit" class="flow-action success-soft">Ativar</button>
+                    </form>
+                {% endif %}
+
+                <form method="POST" action="{{ url_for('excluir_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                    <button
+                        type="submit"
+                        class="flow-action danger"
+                        onclick="return confirm('Tem certeza que deseja excluir este fluxo?');"
+                    >
+                        Excluir
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+
+        <div class="flow-card empty-card">
+            <div class="empty-icon">⚡</div>
+            <h3>Criar novo fluxo</h3>
+            <p>Monte uma nova automação para atendimento, vendas, suporte ou captação.</p>
+
+            <form method="POST" action="{{ url_for('novo_fluxo') }}" style="width: 100%; max-width: 260px; margin-top: 10px;">
+                <input
+                    type="text"
+                    name="nome"
+                    placeholder="Ex: Atendimento inicial"
+                    required
+                >
+                <button type="submit" class="new-flow-btn alt">Começar agora</button>
+            </form>
+        </div>
+
+    </div>
+    {% else %}
+
+    <div class="flow-grid">
+        <div class="flow-card empty-card" style="grid-column: 1 / -1;">
+            <div class="empty-icon">⚡</div>
+            <h3>Nenhum fluxo criado ainda</h3>
+            <p>Crie seu primeiro fluxo para começar a automatizar o atendimento da sua empresa.</p>
+
+            <form method="POST" action="{{ url_for('novo_fluxo') }}" style="width: 100%; max-width: 320px; margin-top: 10px;">
+                <input
+                    type="text"
+                    name="nome"
+                    placeholder="Ex: Atendimento geral"
+                    required
+                >
+                <button type="submit" class="new-flow-btn alt">Criar primeiro fluxo</button>
+            </form>
+        </div>
+    </div>
+
+    {% endif %}
+
+</div>
+
+{% endblock %}

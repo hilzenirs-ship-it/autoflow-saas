@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Editar Contato{% endblock %}
+
+{% block page_content %}
+
+<div class="form-page">
+
+    <div class="header">
+        <h2>Editar Contato</h2>
+    </div>
+
+    <form method="POST" class="form-card">
+
+        <label>Nome</label>
+        <input type="text" name="nome" value="{{ contato['nome'] }}" required>
+
+        <label>Telefone</label>
+        <input type="text" name="telefone" value="{{ contato['telefone'] }}" required>
+
+        {% if tags %}
+            <label>Tags</label>
+            <div class="tag-checkbox-list">
+                {% for tag in tags %}
+                    <label class="tag-checkbox-item">
+                        <input
+                            type="checkbox"
+                            name="tag_ids"
+                            value="{{ tag.id }}"
+                            {% if tag.id in tag_ids_contato %}checked{% endif %}
+                        >
+                        <span class="contact-tag" style="background: {{ tag.cor or '#7b5ae0' }}22; color: {{ tag.cor or '#7b5ae0' }}; border-color: {{ tag.cor or '#7b5ae0' }}55;">
+                            {{ tag.nome }}
+                        </span>
+                    </label>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <button type="submit" class="flow-action primary">Salvar alterações</button>
+
+    </form>
+
+</div>
+
+{% endblock %}

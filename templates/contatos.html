@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Contatos{% endblock %}
+
+{% block page_content %}
+<div class="contacts-page">
+
+    <div class="header contacts-header">
+        <div>
+            <h2>Contatos</h2>
+            <p>Gerencie seus leads e clientes</p>
+        </div>
+
+        <div class="header-actions">
+            <a href="{{ url_for('exportar_contatos') }}" class="flow-action secondary">Exportar CSV</a>
+            <a href="/contatos/novo" class="flow-action primary">+ Novo contato</a>
+        </div>
+    </div>
+
+    <div class="search-bar">
+        <form method="GET" class="contact-filter-form">
+            <input type="text" name="busca" value="{{ busca or '' }}" placeholder="Buscar contato...">
+            <select name="tag_id">
+                <option value="">Todas as tags</option>
+                {% for tag in tags %}
+                    <option value="{{ tag.id }}" {% if tag_id_selecionada == tag.id %}selected{% endif %}>
+                        {{ tag.nome }}
+                    </option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="flow-action">Filtrar</button>
+        </form>
+    </div>
+
+    <div class="details-card">
+        <h3>Tags</h3>
+
+        <form method="POST" action="{{ url_for('nova_tag') }}" class="tag-create-form">
+            <input type="text" name="nome" placeholder="Nova tag" required>
+            <input type="color" name="cor" value="#7b5ae0">
+            <button type="submit" class="flow-action primary">Criar tag</button>
+        </form>
+
+        {% if tags %}
+            <div class="contact-tags-cloud">
+                {% for tag in tags %}
+                    <div class="tag-pill-row">
+                        <span class="contact-tag" style="background: {{ tag.cor or '#7b5ae0' }}22; color: {{ tag.cor or '#7b5ae0' }}; border-color: {{ tag.cor or '#7b5ae0' }}55;">
+                            {{ tag.nome }}
+                        </span>
+                        <form method="POST" action="{{ url_for('excluir_tag', tag_id=tag.id) }}" class="inline-form">
+                            <button type="submit" class="flow-action danger small" onclick="return confirm('Excluir essa tag?')">Excluir</button>
+                        </form>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p style="color: var(--text-soft); font-size: 14px;">Nenhuma tag criada ainda.</p>
+        {% endif %}
+    </div>
+
+    <div class="contact-list">
+        {% if contatos %}
+            {% for contato in contatos %}
+            <div class="contact-item">
+
+                <!-- INFO -->
+                <div>
+                    <h4>{{ contato["nome"] if contato["nome"] else "Sem nome" }}</h4>
+                    <p>{{ contato["telefone"] }}</p>
+                    {% if contato["tags_nomes"] %}
+                        <div class="contact-tags-inline">
+                            {% for tag_nome in contato["tags_nomes"].split(', ') %}
+                                <span class="contact-tag">{{ tag_nome }}</span>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+
+                <!-- STATUS -->
+                <span class="status active">
+                    {{ contato["status_lead"] if contato["status_lead"] else "Ativo" }}
+                </span>
+
+                <!-- AÇÕES -->
+                <div class="contact-actions">
+                    <a href="/contatos/editar/{{ contato['id'] }}" class="flow-action small">
+                        Editar
+                    </a>
+
+                    <form method="POST" action="/contatos/excluir/{{ contato['id'] }}" class="inline-form">
+                        <button type="submit"
+                           class="flow-action danger small"
+                           onclick="return confirm('Tem certeza que deseja excluir este contato?')">
+                            Excluir
+                        </button>
+                    </form>
+                </div>
+
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <h3>Nenhum contato cadastrado</h3>
+                <p>Comece criando seu primeiro contato no sistema.</p>
+                <a href="/contatos/novo" class="flow-action primary">
+                    Criar primeiro contato
+                </a>
+            </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

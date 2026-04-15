@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Criar Conta{% endblock %}
+
+{% block page_content %}
+<div class="login-bg">
+    <div class="login-card">
+        <h1 class="logo">Criar Conta</h1>
+        <p class="subtitle">Comece seu sistema agora 💜</p>
+
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="text" name="nome" placeholder="Seu nome" required>
+
+            <input type="email" name="email" placeholder="Seu e-mail" required>
+
+            <input type="text" name="empresa" placeholder="Nome da sua empresa" required>
+
+            <input type="password" name="senha" placeholder="Crie uma senha" required>
+
+            <button type="submit">Criar conta</button>
+        </form>
+
+        <p style="margin-top: 15px;">
+            Já tem conta?
+            <a href="{{ url_for('login') }}">Entrar</a>
+        </p>
+    </div>
+</div>
+{% endblock %}
