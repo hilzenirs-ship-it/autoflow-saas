@@ -1,72 +1,130 @@
-# HilFlow Automação
+# Automação HilFlow
 
-Plataforma completa de CRM + Central de Atendimento Inteligente com automação via bot IA e WhatsApp.
+Plataforma completa de CRM + central de atendimento inteligente com automação via bot IA e WhatsApp.
 
-## Funcionalidades Implementadas
+---
 
-- ✅ **Multiempresa Real**: Isolamento completo por empresa
-- ✅ **Fluxos Operacionais**: Editor visual, execução bloco a bloco
-- ✅ **Atendimento Humano**: Assumir, pausar bot, fila profissional
-- ✅ **Tags Funcionais**: Criar, aplicar, filtrar em automação
-- ✅ **Logs/Eventos**: Rastreamento detalhado de ações
-- ✅ **Agendamento Inteligente**: Validação de conflitos e disponibilidade
-- ✅ **Regras Avançadas**: Prioridade, múltiplas ações, condições complexas
-- ✅ **Integração WhatsApp**: Via Twilio para mensagens reais
+## 🚀 Funcionalidades implementadas
 
-## Setup
+* ✅ Multiempresa real: isolamento completo por empresa
+* ✅ Fluxos operacionais: editor visual e execução bloco a bloco
+* ✅ Atendimento humano: assumir conversa, pausar bot e fila profissional
+* ✅ Tags funcionais: criar, aplicar e filtrar em automação
+* ✅ Logs e eventos: rastreamento detalhado de ações
+* ✅ Agendamento inteligente: validação de conflitos e disponibilidade
+* ✅ Regras avançadas: prioridade, múltiplas ações e condições complexas
+* ✅ Integração com WhatsApp: envio e recebimento de mensagens
 
-1. Clone o repositório.
-2. Instale as dependências:
-   ```
-   pip install -r requirements.txt
-   ```
-3. Configure o ambiente:
-   - Copie `.env.example` para `.env` e preencha as variáveis.
-4. Inicialize o banco de dados:
-   ```
-   python init_db.py
-   ```
-5. Execute o app:
-   ```
-   python app.py
-   ```
-   Ou com Docker:
-   ```
-   docker-compose up
-   ```
+---
 
-## Variáveis de Ambiente
+## ⚙️ Como executar o projeto
 
-- `SECRET_KEY`: Chave secreta para sessões Flask.
-- `OPENAI_API_KEY`: Chave da API OpenAI.
-- `OPENAI_MODEL`: Modelo GPT (padrão: gpt-4o-mini).
-- `DATABASE_PATH`: Caminho do banco SQLite (padrão: database/hilflow.db).
-- `REDIS_URL`: URL Redis para cache.
-- `TWILIO_ACCOUNT_SID`: SID da conta Twilio.
-- `TWILIO_AUTH_TOKEN`: Token Twilio.
-- `TWILIO_PHONE_NUMBER`: Número WhatsApp Twilio.
-- `DEBUG`: Modo debug (True/False).
+### 1. Clonar o repositório
 
-## WhatsApp Integration
+```bash
+git clone https://github.com/hilzenirs-ship-it/autoflow-saas.git
+cd autoflow-saas
+```
 
-1. Configure conta Twilio e WhatsApp Sandbox.
-2. Defina webhook: `https://seudominio.com/api/webhook/whatsapp`
-3. Teste enviando mensagens do WhatsApp.
+---
 
-## Estrutura
+### 2. Instalar dependências
 
-- `app.py`: Aplicação principal com blueprints.
-- `routes/`: Módulos de rotas (auth, dashboard, regras, api, fluxos, fluxo_editor).
-- `services/`: Lógica de negócio (regras_service).
-- `templates/`: Templates HTML responsivos.
-- `static/`: CSS e arquivos estáticos.
-- `database/`: Schema SQL completo.
-- `utils/`: Utilitários (auth, db, whatsapp, cache).
+```bash
+pip install -r requisitos.txt
+```
 
-## Desenvolvimento
+> ⚠️ Se o nome do arquivo no seu projeto for `requirements.txt`, use esse nome no comando.
 
-- Use virtualenv para isolamento.
-- Testes: `pytest`
-- Code style: Mantenha consistência com código existente.
-- Execute testes (a implementar).
-- Contribua via pull requests.
+---
+
+### 3. Configurar ambiente
+
+Copie o arquivo `.env.example` para `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Depois preencha com suas credenciais.
+
+---
+
+### 4. Inicializar banco de dados
+
+```bash
+python init_db.py
+```
+
+---
+
+### 5. Rodar o projeto
+
+```bash
+python app.py
+```
+
+---
+
+### 🐳 Rodar com Docker (opcional)
+
+```bash
+docker-compose up
+```
+
+---
+
+## 🔐 Variáveis de ambiente
+
+* `SECRET_KEY` → chave secreta do Flask
+* `OPENAI_API_KEY` → chave da OpenAI
+* `OPENAI_MODEL` → modelo da IA
+* `DATABASE_PATH` → caminho do banco SQLite
+* `REDIS_URL` → conexão Redis
+* `TWILIO_ACCOUNT_SID` → SID da conta Twilio
+* `TWILIO_AUTH_TOKEN` → token Twilio
+* `TWILIO_PHONE_NUMBER` → número do WhatsApp
+* `DEBUG` → modo debug (True/False)
+
+---
+
+## 📲 Integração com WhatsApp
+
+1. Configure sua conta no Twilio
+2. Ative o WhatsApp Sandbox ou número oficial
+3. Configure o webhook:
+
+```
+https://seudominio.com/api/webhook/whatsapp
+```
+
+4. Teste enviando mensagens
+
+---
+
+## 🧱 Estrutura do projeto
+
+* `app.py` → aplicação principal
+* `config.py` → configurações
+* `utils/` → utilitários (db, cache, whatsapp, etc)
+* `templates/` → HTMLs
+* `tests/` → testes
+* `init_db.py` → criação do banco
+* `migrar.py` → migrações
+
+---
+
+## 🧠 Boas práticas
+
+* Use ambiente virtual (`venv`)
+* Nunca suba `.env` para o GitHub
+* Nunca suba banco de dados (`.db`)
+* Use `.gitignore` corretamente
+
+---
+
+## 📌 Status do projeto
+
+🚧 Em evolução contínua para se tornar um SaaS completo de automação e atendimento inteligente.
+
+---
