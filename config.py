@@ -4,11 +4,17 @@ import secrets
 class Config:
     ENV = os.environ.get("FLASK_ENV", os.environ.get("APP_ENV", "production")).strip().lower()
     DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
+    _SECRET_KEYS_FRACAS = {
+        "hilflow-connect-dev-secret",
+        "replace-with-a-random-secret-key-with-at-least-32-characters",
+        "change-me",
+        "changeme",
+    }
     if ENV in {"development", "testing"}:
         SECRET_KEY = os.environ.get("SECRET_KEY", secrets.token_hex(32))
     else:
-        SECRET_KEY = os.environ.get("SECRET_KEY")
-        if not SECRET_KEY or len(SECRET_KEY) < 32 or SECRET_KEY == "hilflow-connect-dev-secret":
+        SECRET_KEY = (os.environ.get("SECRET_KEY") or "").strip()
+        if not SECRET_KEY or len(SECRET_KEY) < 32 or SECRET_KEY.lower() in _SECRET_KEYS_FRACAS:
             raise ValueError("SECRET_KEY deve ser definida, segura (mínimo 32 caracteres) e não fraca em produção")
         if DEBUG:
             raise ValueError("DEBUG=True nao e permitido em producao")

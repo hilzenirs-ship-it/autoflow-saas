@@ -33,6 +33,17 @@ def test_producao_rejeita_debug_true(monkeypatch):
         )
 
 
+def test_producao_rejeita_secret_key_placeholder(monkeypatch):
+    with pytest.raises(ValueError, match="SECRET_KEY"):
+        carregar_config(
+            monkeypatch,
+            FLASK_ENV="production",
+            SECRET_KEY="replace-with-a-random-secret-key-with-at-least-32-characters",
+            DEBUG="False",
+            REDIS_URL="redis://localhost:6379/0",
+        )
+
+
 def test_producao_cookie_secure_padrao_true(monkeypatch):
     config_module = carregar_config(
         monkeypatch,
