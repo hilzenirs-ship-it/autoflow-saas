@@ -5791,6 +5791,8 @@ def validar_assinatura_mercado_pago(signature_header):
 
 
 @app.route('/webhook/mercadopago', methods=['POST'])
+@csrf.exempt
+@limiter.limit("60 per minute")
 def webhook_mercadopago():
     if not Config.MERCADO_PAGO_WEBHOOK_SECRET:
         app.logger.warning("Mercado Pago webhook secret não configurado")

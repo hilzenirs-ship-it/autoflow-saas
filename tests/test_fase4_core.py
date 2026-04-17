@@ -629,6 +629,19 @@ def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
     data = response.get_json()
     assert data["error"] == "Missing required fields"
 
+    # Rota legada singular deve continuar aceitando webhook externo sem CSRF.
+    app_module.Config.MERCADO_PAGO_WEBHOOK_SECRET = ""
+    app_module.app.config["WTF_CSRF_ENABLED"] = True
+    response = client.post(
+        "/webhook/mercadopago",
+        data=payload_str,
+        content_type="application/json",
+    )
+    assert response.status_code == 500
+    assert response.get_json()["error"] == "Webhook secret not configured"
+    app_module.app.config["WTF_CSRF_ENABLED"] = False
+    app_module.Config.MERCADO_PAGO_WEBHOOK_SECRET = "test_secret"
+
     # Approved payment updates payment status on empresa_limites
     base = seed_base("mercado_pago")
     app_module.garantir_limites_empresa(base["empresa_id"])
