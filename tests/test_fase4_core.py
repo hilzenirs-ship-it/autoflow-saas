@@ -300,6 +300,42 @@ def test_webhook_whatsapp_simulado_deduplica_external_id(client, app_module, see
     assert primeira.status_code == 200
 
 
+def test_webhook_instagram_rota_registrada(client, app_module, seed_base):
+    base = seed_base("webhook_instagram")
+    conn = app_module.get_connection()
+    conn.execute(
+        """
+        INSERT INTO canal_integracoes (
+            empresa_id, canal, nome, status, webhook_token, instagram_account_id, access_token, config_json
+        )
+        VALUES (?, 'instagram', 'Instagram', 'ativo', 'token-instagram', 'ig-account', '', '{}')
+        """,
+        (base["empresa_id"],),
+    )
+    conn.commit()
+    conn.close()
+
+    payload = {
+        "entry": [
+            {
+                "messaging": [
+                    {
+                        "sender": {"id": "ig-user-1", "name": "Cliente IG"},
+                        "message": {"mid": "ig-msg-1", "text": "oi"},
+                    }
+                ]
+            }
+        ]
+    }
+
+    response = client.post("/webhooks/instagram/token-instagram", json=payload)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["ok"] is True
+    assert data["canal"] == "instagram"
+
+
 def test_webhook_whatsapp_merges_contato_por_telefone(client, app_module, seed_base):
     base = seed_base("merge_contato")
     # Garantir que limites sejam criados

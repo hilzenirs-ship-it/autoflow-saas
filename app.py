@@ -5274,6 +5274,16 @@ def enviar_mensagem_externa_canal_com_retry(canal, integracao, destinatario, con
     return ultimo_resultado or {"ok": False, "envio_real": False, "erro": "envio_nao_realizado", "tentativas_realizadas": 0}
 
 
+def normalizar_identificador_contato_canal(canal, identificador):
+    canal = (canal or "").strip().lower()
+    identificador = (str(identificador or "")).strip()
+    if not identificador:
+        return None
+    if canal == "instagram":
+        return identificador[:255]
+    return normalizar_telefone(identificador)
+
+
 def salvar_mensagem_recebida_canal(canal, integracao, payload):
     dados = extrair_payload_mensagem_webhook(canal, payload)
     if dados.get("ignorado"):
@@ -5287,7 +5297,7 @@ def salvar_mensagem_recebida_canal(canal, integracao, payload):
 
     texto = dados.get("texto")
     telefone_raw = dados.get("telefone")
-    telefone = normalizar_telefone(telefone_raw) if telefone_raw else None
+    telefone = normalizar_identificador_contato_canal(canal, telefone_raw)
     nome_recebido = limpar_nome_contato(dados.get("nome")) or fallback_nome_contato(canal, telefone)
 
     if not texto or not telefone:
