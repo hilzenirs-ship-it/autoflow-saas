@@ -13,6 +13,7 @@
         </div>
 
         <form method="POST" action="{{ url_for('novo_fluxo') }}" style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input
                 type="text"
                 name="nome"
@@ -69,20 +70,24 @@
                 <a href="{{ url_for('fluxo_editor', fluxo_id=fluxo.id) }}" class="flow-action primary">Editar</a>
 
                 <form method="POST" action="{{ url_for('duplicar_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <button type="submit" class="flow-action">Duplicar</button>
                 </form>
 
                 {% if fluxo.ativo == 1 %}
                     <form method="POST" action="{{ url_for('toggle_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="flow-action danger-soft">Desativar</button>
                     </form>
                 {% else %}
                     <form method="POST" action="{{ url_for('toggle_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="flow-action success-soft">Ativar</button>
                     </form>
                 {% endif %}
 
                 <form method="POST" action="{{ url_for('excluir_fluxo', fluxo_id=fluxo.id) }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <button
                         type="submit"
                         class="flow-action danger"
@@ -101,6 +106,7 @@
             <p>Monte uma nova automação para atendimento, vendas, suporte ou captação.</p>
 
             <form method="POST" action="{{ url_for('novo_fluxo') }}" style="width: 100%; max-width: 260px; margin-top: 10px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <input
                     type="text"
                     name="nome"
@@ -121,6 +127,7 @@
             <p>Crie seu primeiro fluxo para começar a automatizar o atendimento da sua empresa.</p>
 
             <form method="POST" action="{{ url_for('novo_fluxo') }}" style="width: 100%; max-width: 320px; margin-top: 10px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <input
                     type="text"
                     name="nome"

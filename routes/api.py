@@ -1,3 +1,11 @@
+# =========================================================
+# ⚠️ ARQUIVO LEGADO - NÃO UTILIZAR
+# =========================================================
+# Este módulo usa schema antigo (etapa_atual, created_at)
+# e NÃO é compatível com o sistema atual.
+# NÃO registrar este blueprint no app principal.
+# =========================================================
+
 from flask import Blueprint, jsonify, request
 from utils.db import get_connection
 from utils.auth import login_required, obter_empresa_id_logada
@@ -5,6 +13,10 @@ from services.regras_service import buscar_resposta_por_regras
 import json
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
+
+@api_bp.before_request
+def bloquear_api_legada():
+    return {"erro": "API legada desativada"}, 410
 
 @api_bp.route('/v1/conversas', methods=['GET'])
 @login_required

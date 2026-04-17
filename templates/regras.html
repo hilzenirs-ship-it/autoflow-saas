@@ -15,7 +15,7 @@
     <div class="rule-card">
         <h3>Nova regra</h3>
 
-        <form method="POST" action="{{ url_for('regras.nova_regra') }}">
+        <form method="POST" action="{{ url_for('nova_regra') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input type="text" name="nome" placeholder="Nome da regra" required>
 
@@ -113,6 +113,7 @@
 
                 <div class="rule-actions">
                     <form method="POST" action="{{ url_for('toggle_regra', regra_id=regra.id) }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="rule-action">
                             {% if regra.ativo == 1 %}
                                 Desativar
@@ -127,6 +128,7 @@
                     </a>
 
                     <form method="POST" action="{{ url_for('excluir_regra', regra_id=regra.id) }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit"
                             class="rule-action danger-soft"
                             onclick="return confirm('Excluir essa regra?')">

@@ -1,11 +1,16 @@
 import importlib
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 
-@pytest.fixture(scope="session")
+os.environ.setdefault("FLASK_ENV", "testing")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-with-more-than-32-characters")
+
+
+@pytest.fixture(scope="function")
 def app_module():
     db_dir = Path(__file__).resolve().parent / ".tmp"
     db_dir.mkdir(exist_ok=True)

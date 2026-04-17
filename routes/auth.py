@@ -1,49 +1,43 @@
-from flask import Blueprint, render_template, request, redirect, url_for, session, flash
-from utils.db import get_connection
-from werkzeug.security import check_password_hash, generate_password_hash
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+
+from services.auth_service import buscar_empresa_do_usuario, buscar_usuario_por_email, gerar_hash_senha, senha_confere
+from services.saas_limits_service import garantir_limites_empresa
 from utils.auth import usuario_logado
+from utils.db import get_connection
 from utils.limiter import limiter
-from typing import Optional
 
-auth_bp = Blueprint('auth', __name__)
 
-def buscar_usuario_por_email(email: str) -> Optional[dict]:
-    conn = get_connection()
-    usuario = conn.execute(
-        """
-        SELECT id, nome, email, senha_hash
-        FROM users
-        WHERE lower(email) = ?
-        LIMIT 1
-        """,
-        (email,)
-    ).fetchone()
-    conn.close()
-    return usuario
+auth_bp = Blueprint("auth", __name__)
 
-def senha_confere(senha: str, senha_hash: str) -> bool:
-    return check_password_hash(senha_hash, senha)
 
-def gerar_hash_senha(senha: str) -> str:
-    return generate_password_hash(senha)
+def registrar_login_log(user_id=None, empresa_id=None, email_tentado=None, status="sucesso", motivo=None):
+    try:
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO login_logs (
+                user_id, empresa_id, email_tentado, ip, user_agent, status, motivo, criado_em
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                user_id,
+                empresa_id,
+                (email_tentado or "").strip().lower() or None,
+                request.remote_addr,
+                request.headers.get("User-Agent"),
+                status,
+                motivo,
+            )
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
-def buscar_empresa_do_usuario(user_id: int) -> Optional[dict]:
-    conn = get_connection()
-    empresa = conn.execute(
-        """
-        SELECT e.id, e.nome_empresa, e.nome_exibicao
-        FROM empresas e
-        JOIN empresa_membros em ON em.empresa_id = e.id
-        WHERE em.user_id = ? AND em.ativo = 1
-        LIMIT 1
-        """,
-        (user_id,)
-    ).fetchone()
-    conn.close()
-    return empresa
 
 @auth_bp.route("/", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     if usuario_logado():
         return redirect(url_for("dashboard"))
@@ -53,23 +47,39 @@ def login():
         senha = (request.form.get("senha") or "").strip()
 
         if not email or not senha:
+            registrar_login_log(email_tentado=email, status="falha", motivo="campos_obrigatorios")
             flash("Preencha e-mail e senha.", "erro")
             return render_template("login.html", email=email)
 
         usuario = buscar_usuario_por_email(email)
 
         if not usuario:
-            flash("Usuário não encontrado.", "erro")
+            registrar_login_log(email_tentado=email, status="falha", motivo="credenciais_invalidas")
+            flash("Usuario nao encontrado.", "erro")
             return render_template("login.html", email=email)
 
         if not senha_confere(senha, usuario["senha_hash"]):
-            flash("Senha inválida.", "erro")
+            empresa_log = buscar_empresa_do_usuario(usuario["id"])
+            registrar_login_log(
+                user_id=usuario["id"],
+                empresa_id=empresa_log["id"] if empresa_log else None,
+                email_tentado=email,
+                status="falha",
+                motivo="credenciais_invalidas"
+            )
+            flash("Senha invalida.", "erro")
             return render_template("login.html", email=email)
 
         empresa = buscar_empresa_do_usuario(usuario["id"])
 
         if not empresa:
-            flash("Usuário sem empresa vinculada.", "erro")
+            registrar_login_log(
+                user_id=usuario["id"],
+                email_tentado=email,
+                status="falha",
+                motivo="empresa_nao_vinculada"
+            )
+            flash("Usuario sem empresa vinculada.", "erro")
             return render_template("login.html", email=email)
 
         session["user_id"] = usuario["id"]
@@ -78,13 +88,21 @@ def login():
         session["empresa_id"] = empresa["id"]
         session["empresa_nome"] = empresa["nome_exibicao"] or empresa["nome_empresa"]
 
+        registrar_login_log(
+            user_id=usuario["id"],
+            empresa_id=empresa["id"],
+            email_tentado=email,
+            status="sucesso",
+            motivo=None
+        )
+
         return redirect(url_for("dashboard"))
 
     return render_template("login.html")
 
 
 @auth_bp.route("/cadastro", methods=["GET", "POST"])
-@limiter.limit("3 per minute")
+@limiter.limit("3 per minute", methods=["POST"])
 def cadastro():
     if usuario_logado():
         return redirect(url_for("dashboard"))
@@ -118,7 +136,7 @@ def cadastro():
 
         if usuario_existente:
             conn.close()
-            flash("Esse e-mail já está cadastrado.", "erro")
+            flash("Esse e-mail ja esta cadastrado.", "erro")
             return render_template(
                 "cadastro.html",
                 nome=nome,
@@ -152,6 +170,7 @@ def cadastro():
             """,
             (empresa_id, user_id)
         )
+        garantir_limites_empresa(empresa_id, conn=conn)
 
         conn.commit()
         conn.close()

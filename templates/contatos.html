@@ -36,6 +36,7 @@
         <h3>Tags</h3>
 
         <form method="POST" action="{{ url_for('nova_tag') }}" class="tag-create-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input type="text" name="nome" placeholder="Nova tag" required>
             <input type="color" name="cor" value="#7b5ae0">
             <button type="submit" class="flow-action primary">Criar tag</button>
@@ -49,6 +50,7 @@
                             {{ tag.nome }}
                         </span>
                         <form method="POST" action="{{ url_for('excluir_tag', tag_id=tag.id) }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="flow-action danger small" onclick="return confirm('Excluir essa tag?')">Excluir</button>
                         </form>
                     </div>
@@ -89,6 +91,7 @@
                     </a>
 
                     <form method="POST" action="/contatos/excluir/{{ contato['id'] }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit"
                            class="flow-action danger small"
                            onclick="return confirm('Tem certeza que deseja excluir este contato?')">

@@ -149,25 +149,31 @@
                 <div class="chat-header-actions">
                     {% if conversa.bot_ativo == 1 %}
                         <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=0) }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="small-btn">Pausar bot</button>
                         </form>
                         <form method="POST" action="{{ url_for('assumir_conversa', conversa_id=conversa.id) }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="small-btn">Assumir atendimento</button>
                         </form>
                     {% else %}
                         <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=1) }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="small-btn">Ativar bot</button>
                         </form>
                         <form method="POST" action="{{ url_for('marcar_conversa_aguardando_cliente', conversa_id=conversa.id) }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="small-btn">Aguardar cliente</button>
                         </form>
                         {% if conversa.atendimento_status == 'aguardando_cliente' %}
                             <form method="POST" action="{{ url_for('retomar_atendimento_conversa', conversa_id=conversa.id) }}" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                                 <button type="submit" class="small-btn">Retomar atendimento</button>
                             </form>
                         {% endif %}
                         {% if conversa.atendente_nome %}
                             <form method="POST" action="{{ url_for('devolver_conversa_ao_bot', conversa_id=conversa.id) }}" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                                 <button type="submit" class="small-btn">Devolver ao bot</button>
                             </form>
                         {% endif %}
@@ -175,10 +181,12 @@
 
                     {% if conversa.status == 'aberta' %}
                         <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='fechada') }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="small-btn">Encerrar</button>
                         </form>
                     {% else %}
                         <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='aberta') }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="small-btn">Reabrir</button>
                         </form>
                     {% endif %}
@@ -236,6 +244,7 @@
                       action="{{ url_for('enviar_mensagem', conversa_id=conversa.id) }}"
                       class="chat-input"
                       style="margin-bottom: 12px;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="text" name="conteudo" placeholder="Digite sua resposta..." required>
                     <button type="submit" class="send-btn">Enviar</button>
                 </form>
@@ -243,6 +252,7 @@
                 <form method="POST"
                       action="{{ url_for('simular_mensagem_cliente', conversa_id=conversa.id) }}"
                       class="chat-input chat-input-secondary">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="text" name="conteudo_cliente" placeholder="Simular mensagem do cliente..." required>
                     <button type="submit" class="send-btn">Simular</button>
                 </form>
@@ -393,7 +403,7 @@
 
             <div class="details-card">
                 <h3>Observações</h3>
-                <p>Conversa vinculada ao contato selecionado no HilFlow Connect.</p>
+                <p>Conversa vinculada ao contato selecionado no AutoFlow.</p>
                 <p>Use a simulação para testar regras, menu automático, agendamento e continuidade do fluxo.</p>
             </div>
 
@@ -402,25 +412,31 @@
 
                 {% if conversa.bot_ativo == 1 %}
                     <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=0) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="action-btn">Pausar bot</button>
                     </form>
                     <form method="POST" action="{{ url_for('assumir_conversa', conversa_id=conversa.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="action-btn">Assumir atendimento</button>
                     </form>
                 {% else %}
                     <form method="POST" action="{{ url_for('alterar_bot_conversa', conversa_id=conversa.id, ativo=1) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="action-btn">Ativar bot</button>
                     </form>
                     <form method="POST" action="{{ url_for('marcar_conversa_aguardando_cliente', conversa_id=conversa.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="action-btn secondary">Aguardar cliente</button>
                     </form>
                     {% if conversa.atendimento_status == 'aguardando_cliente' %}
                         <form method="POST" action="{{ url_for('retomar_atendimento_conversa', conversa_id=conversa.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="action-btn">Retomar atendimento</button>
                         </form>
                     {% endif %}
                     {% if conversa.atendente_nome %}
                         <form method="POST" action="{{ url_for('devolver_conversa_ao_bot', conversa_id=conversa.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="action-btn">Devolver ao bot</button>
                         </form>
                     {% endif %}
@@ -428,10 +444,12 @@
 
                 {% if conversa.status == 'aberta' %}
                     <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='fechada') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="action-btn secondary">Encerrar</button>
                     </form>
                 {% else %}
                     <form method="POST" action="{{ url_for('alterar_status_conversa', conversa_id=conversa.id, novo_status='aberta') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <button type="submit" class="action-btn">Reabrir</button>
                     </form>
                 {% endif %}

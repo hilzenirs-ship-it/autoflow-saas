@@ -12,6 +12,11 @@ venv/
 *.sqlite3
 .DS_Store
 *.log
+.vscode/
 node_modules/
 build/
 dist/
+.pytest_cache/
+tests/.tmp/
+temp.txt
+temp_check.py

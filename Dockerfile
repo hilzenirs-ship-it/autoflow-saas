@@ -14,5 +14,5 @@ COPY . .
 # Expose port
 EXPOSE 5000
 
-# Run the application
-CMD ["python", "app.py"]
+# Run the application with a production WSGI server
+CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:5000", "wsgi:app"]

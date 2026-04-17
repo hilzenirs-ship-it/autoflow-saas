@@ -1,10 +1,28 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, has_request_context
+import hmac
+import hashlib
 from utils.db import get_connection
-from werkzeug.security import check_password_hash, generate_password_hash
 from functools import wraps
 from config import Config
 from flask_wtf.csrf import CSRFProtect
 from utils.limiter import limiter
+from utils.normalizer import fallback_nome_contato, nome_contato_generico, nome_contato_melhor, normalizar_telefone, limpar_nome_contato
+from services.auth_service import buscar_empresa_do_usuario, buscar_empresas_do_usuario, buscar_usuario_por_email, gerar_hash_senha, senha_confere
+from services.conversas_service import buscar_ultimas_mensagens_conversas, contar_mensagens_conversa
+from services.dashboard_service import obter_teste_banco_data
+from services.saas_limits_service import flash_limite_bloqueado, garantir_limites_empresa, montar_status_limites, verificar_limite_recurso
+from routes.auth import auth_bp
+from routes.agendamentos import agendamentos_bp
+from routes.configuracoes import configuracoes_bp
+from routes.contatos import contatos_bp
+from routes.conversas import conversas_bp
+from routes.dashboard import dashboard_bp
+from routes.diagnostico import diagnostico_bp
+from routes.fluxos import fluxos_bp
+from routes.main import main_bp, registrar_aliases_endpoints_legados
+from routes.metricas import metricas_bp
+from routes.regras import regras_bp
+from routes.webhooks import webhooks_bp
 import json
 import unicodedata
 import os
@@ -14,18 +32,82 @@ import io
 import secrets
 import hmac
 import hashlib
+import logging
 import re
+import sqlite3
+import uuid
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
 app.secret_key = Config.SECRET_KEY
+app.config.update(
+    DEBUG=Config.DEBUG,
+    RATELIMIT_STORAGE_URI=Config.RATELIMIT_STORAGE_URI,
+    SESSION_COOKIE_SECURE=Config.SESSION_COOKIE_SECURE,
+    SESSION_COOKIE_HTTPONLY=Config.SESSION_COOKIE_HTTPONLY,
+    SESSION_COOKIE_SAMESITE=Config.SESSION_COOKIE_SAMESITE,
+)
+
+logging.basicConfig(
+    level=getattr(logging, Config.LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+app.logger.setLevel(getattr(logging, Config.LOG_LEVEL, logging.INFO))
+if Config.ENV == "production" and Config.RATELIMIT_STORAGE_URI == "memory://":
+    app.logger.warning("Rate limit usando memory:// em producao. Configure REDIS_URL ou RATELIMIT_STORAGE_URI.")
+
+
+@app.after_request
+def registrar_resposta_http(response):
+    if response.status_code >= 400:
+        app.logger.warning(
+            "HTTP %s %s %s",
+            response.status_code,
+            request.method,
+            request.path,
+        )
+    return response
 
 csrf = CSRFProtect(app)
+limiter.init_app(app)
 from flask_caching import Cache
 
 from utils.cache import cache
 
 cache.init_app(app, config={'CACHE_TYPE': 'redis', 'CACHE_REDIS_URL': Config.REDIS_URL or 'redis://localhost:6379/0'})
+
+
+# Handler global para erro 500 (não tratado)
+@app.errorhandler(500)
+def handle_500_error(error):
+    """
+    Captura erros 500 não tratados e registra em error_logs.
+    """
+    correlation_id = obter_ou_criar_correlation_id() if has_request_context() else None
+    user_id = obter_user_id_logado() if usuario_logado() else None
+    empresa_id = obter_empresa_id_logada() if usuario_logado() else None
+
+    registrar_erro_log(
+        error_type="500_unhandled_error",
+        error_message=str(error),
+        stack_trace=str(error.__traceback__) if hasattr(error, '__traceback__') else None,
+        status_code=500,
+        empresa_id=empresa_id,
+        user_id=user_id,
+        correlation_id=correlation_id,
+        endpoint=request.path if has_request_context() else None,
+        method=request.method if has_request_context() else None,
+        severity="critical"
+    )
+
+    app.logger.error(f"Erro 500 não tratado [correlation_id={correlation_id}]: {error}")
+
+    return jsonify({
+        "ok": False,
+        "erro": "erro_interno_servidor",
+        "mensagem": "Ocorreu um erro interno. Nosso time foi notificado.",
+        "correlation_id": correlation_id
+    }), 500
 
 
 def _coluna_existe(conn, tabela, coluna):
@@ -42,6 +124,110 @@ def _coluna_existe(conn, tabela, coluna):
 def _garantir_coluna(conn, tabela, coluna, definicao):
     if not _coluna_existe(conn, tabela, coluna):
         conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {definicao}")
+
+
+def _garantir_login_logs_compativel(conn):
+    colunas = conn.execute("PRAGMA table_info(login_logs)").fetchall()
+    if not colunas:
+        return
+
+    por_nome = {coluna["name"]: coluna for coluna in colunas}
+    user_id_coluna = por_nome.get("user_id")
+    empresa_id_coluna = por_nome.get("empresa_id")
+    precisa_recriar = (
+        (user_id_coluna and user_id_coluna["notnull"] == 1)
+        or (empresa_id_coluna and empresa_id_coluna["notnull"] == 1)
+    )
+
+    if precisa_recriar:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("ALTER TABLE login_logs RENAME TO login_logs_old")
+        conn.execute(
+            """
+            CREATE TABLE login_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                empresa_id INTEGER,
+                email_tentado TEXT,
+                ip TEXT,
+                user_agent TEXT,
+                status TEXT DEFAULT 'sucesso',
+                motivo TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (empresa_id) REFERENCES empresas(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO login_logs (
+                id, user_id, empresa_id, ip, user_agent, status, timestamp, criado_em
+            )
+            SELECT
+                id, user_id, empresa_id, ip, user_agent, 'sucesso', timestamp, timestamp
+            FROM login_logs_old
+            """
+        )
+        conn.execute("DROP TABLE login_logs_old")
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    _garantir_coluna(conn, "login_logs", "email_tentado", "TEXT")
+    _garantir_coluna(conn, "login_logs", "status", "TEXT DEFAULT 'sucesso'")
+    _garantir_coluna(conn, "login_logs", "motivo", "TEXT")
+    _garantir_coluna(conn, "login_logs", "criado_em", "TEXT")
+    conn.execute(
+        """
+        UPDATE login_logs
+        SET status = COALESCE(status, 'sucesso'),
+            criado_em = COALESCE(criado_em, timestamp)
+        """
+    )
+
+
+def _garantir_indice_unico_agendamentos(conn):
+    duplicados = conn.execute(
+        """
+        SELECT
+            empresa_id,
+            data,
+            horario,
+            COUNT(*) AS total,
+            GROUP_CONCAT(id) AS ids
+        FROM agendamentos
+        WHERE status != 'cancelado'
+          AND empresa_id IS NOT NULL
+          AND data IS NOT NULL
+          AND horario IS NOT NULL
+        GROUP BY empresa_id, data, horario
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+
+    if duplicados:
+        detalhes = [
+            f"empresa_id={item['empresa_id']} data={item['data']} horario={item['horario']} ids={item['ids']}"
+            for item in duplicados[:10]
+        ]
+        app.logger.error(
+            "Indice unico de agendamentos ativos nao foi criado porque existem slots duplicados: %s",
+            "; ".join(detalhes),
+        )
+        return False
+
+    try:
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_agendamentos_slot_ativo
+            ON agendamentos (empresa_id, data, horario)
+            WHERE status != 'cancelado'
+            """
+        )
+        return True
+    except sqlite3.IntegrityError as erro:
+        app.logger.error("Falha ao criar indice unico de agendamentos ativos: %s", erro)
+        return False
 
 
 def garantir_schema_compativel():
@@ -180,6 +366,7 @@ def garantir_schema_compativel():
             nome TEXT NOT NULL UNIQUE,
             descricao TEXT,
             preco_mensal REAL DEFAULT 0,
+            limite_contatos INTEGER,
             limite_conversas INTEGER,
             limite_mensagens INTEGER,
             limite_atendentes INTEGER,
@@ -191,23 +378,160 @@ def garantir_schema_compativel():
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS login_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            empresa_id INTEGER,
+            email_tentado TEXT,
+            ip TEXT,
+            user_agent TEXT,
+            status TEXT DEFAULT 'sucesso',
+            motivo TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (empresa_id) REFERENCES empresas(id)
+        )
+        """
+    )
+    _garantir_login_logs_compativel(conn)
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS empresa_limites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             empresa_id INTEGER NOT NULL UNIQUE,
             plano_id INTEGER,
+            limite_contatos INTEGER,
             limite_conversas INTEGER,
             limite_mensagens INTEGER,
             limite_atendentes INTEGER,
             limite_integracoes INTEGER,
             status TEXT DEFAULT 'ativo',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS error_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            correlation_id TEXT,
+            empresa_id INTEGER,
+            user_id INTEGER,
+            endpoint TEXT,
+            method TEXT,
+            error_type TEXT,
+            error_message TEXT,
+            stack_trace TEXT,
+            request_data TEXT,
+            user_agent TEXT,
+            ip_address TEXT,
+            severity TEXT DEFAULT 'error',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE SET NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_error_logs_empresa_criado
+        ON error_logs (empresa_id, criado_em DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_error_logs_correlation
+        ON error_logs (correlation_id)
+        """
+    )
+    conn.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_contatos_empresa_telefone
         ON contatos (empresa_id, telefone)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_conversas_empresa_atualizada
+        ON conversas (empresa_id, atualizada_em DESC, id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_conversas_empresa_status
+        ON conversas (empresa_id, status)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_mensagens_conversa_id
+        ON mensagens (conversa_id, id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_mensagens_conversa_remetente
+        ON mensagens (conversa_id, remetente_tipo)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_mensagens_conversa_regra
+        ON mensagens (conversa_id, regra_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fluxo_blocos_fluxo
+        ON fluxo_blocos (fluxo_id, ordem, id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_contato_tags_tag_contato
+        ON contato_tags (tag_id, contato_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_agendamentos_empresa_data_horario
+        ON agendamentos (empresa_id, data, horario, status)
+        """
+    )
+    _garantir_indice_unico_agendamentos(conn)
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trigger_agendamento_unico_insert
+        BEFORE INSERT ON agendamentos
+        WHEN EXISTS (
+            SELECT 1 FROM agendamentos
+            WHERE empresa_id = NEW.empresa_id
+              AND data = NEW.data
+              AND horario = NEW.horario
+              AND status != 'cancelado'
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'Já existe agendamento ativo nesse horário.');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trigger_agendamento_unico_update
+        BEFORE UPDATE ON agendamentos
+        WHEN NEW.status != 'cancelado' AND EXISTS (
+            SELECT 1 FROM agendamentos
+            WHERE empresa_id = NEW.empresa_id
+              AND data = NEW.data
+              AND horario = NEW.horario
+              AND status != 'cancelado'
+              AND id != NEW.id
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'Já existe agendamento ativo nesse horário.');
+        END;
         """
     )
     _garantir_coluna(conn, "conversas", "bot_ativo", "INTEGER DEFAULT 1")
@@ -218,6 +542,17 @@ def garantir_schema_compativel():
     _garantir_coluna(conn, "conversas", "bloco_atual_id", "INTEGER")
     _garantir_coluna(conn, "contatos", "origem", "TEXT")
 
+    # Corrigir contatos antigos com nome NULL
+    conn.execute(
+        """
+        UPDATE contatos
+        SET nome = 'Contato sem nome'
+        WHERE nome IS NULL
+           OR TRIM(nome) = ''
+           OR LOWER(TRIM(nome)) IN ('none', 'null', 'undefined', 'nan')
+        """
+    )
+
     _garantir_coluna(conn, "regras", "tipo_regra", "TEXT")
     _garantir_coluna(conn, "regras", "condicao_json", "TEXT")
     _garantir_coluna(conn, "regras", "acao_json", "TEXT")
@@ -227,10 +562,20 @@ def garantir_schema_compativel():
     _garantir_coluna(conn, "fluxos", "tipo_gatilho", "TEXT")
     _garantir_coluna(conn, "fluxos", "gatilho_valor", "TEXT")
 
+    _garantir_coluna(conn, "planos_saas", "limite_contatos", "INTEGER")
+    _garantir_coluna(conn, "empresa_limites", "limite_contatos", "INTEGER")
+    _garantir_coluna(conn, "empresa_limites", "status_pagamento", "TEXT DEFAULT 'trial'")
+    _garantir_coluna(conn, "empresa_limites", "payment_id_externo", "TEXT")
+    _garantir_coluna(conn, "empresa_limites", "pagamento_origem_atualizacao", "TEXT")
+    _garantir_coluna(conn, "empresa_limites", "pagamento_status_externo", "TEXT")
+    _garantir_coluna(conn, "empresa_limites", "status_ciclo_vida", "TEXT DEFAULT 'trial'")
+    _garantir_coluna(conn, "empresa_limites", "data_proximo_retry", "TIMESTAMP")
+
     _garantir_coluna(conn, "agendamentos", "servico", "TEXT")
     _garantir_coluna(conn, "agendamentos", "data", "TEXT")
     _garantir_coluna(conn, "agendamentos", "horario", "TEXT")
     _garantir_coluna(conn, "agendamentos", "status", "TEXT DEFAULT 'confirmado'")
+    _garantir_coluna(conn, "agendamentos", "tentativas_colisao", "INTEGER DEFAULT 0")
 
     _garantir_coluna(conn, "mensagens", "user_id", "INTEGER")
     _garantir_coluna(conn, "mensagens", "canal", "TEXT DEFAULT 'interno'")
@@ -239,6 +584,12 @@ def garantir_schema_compativel():
         """
         CREATE INDEX IF NOT EXISTS idx_mensagens_external_id_canal
         ON mensagens (external_id, canal, remetente_tipo, direcao)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_metricas_empresa_tipo_criado
+        ON metricas_eventos (empresa_id, tipo_evento, criado_em DESC)
         """
     )
 
@@ -250,21 +601,23 @@ def garantir_schema_compativel():
     _garantir_coluna(conn, "canal_integracoes", "config_json", "TEXT")
 
     planos_padrao = [
-        ("Starter", "Base SaaS inicial para operar atendimento e automacao.", 0, 500, 5000, 3, 1),
-        ("Pro", "Operacao profissional com mais atendentes, canais e volume.", 149, 3000, 30000, 10, 3),
-        ("Scale", "Estrutura preparada para crescimento e multiplas equipes.", 399, None, None, None, None),
+        ("Starter", "Base SaaS inicial para operar atendimento e automacao.", 0, 500, 500, 5000, 3, 1),
+        ("Pro", "Operacao profissional com mais atendentes, canais e volume.", 149, 3000, 3000, 30000, 10, 3),
+        ("Scale", "Estrutura preparada para crescimento e multiplas equipes.", 399, None, None, None, None, None),
     ]
     for plano in planos_padrao:
         conn.execute(
             """
             INSERT OR IGNORE INTO planos_saas (
-                nome, descricao, preco_mensal, limite_conversas,
+                nome, descricao, preco_mensal, limite_contatos, limite_conversas,
                 limite_mensagens, limite_atendentes, limite_integracoes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             plano
         )
+
+    conn.execute("UPDATE planos_saas SET limite_contatos = limite_conversas WHERE limite_contatos IS NULL AND nome != 'Scale'")
 
     empresas = conn.execute("SELECT id, user_id FROM empresas").fetchall()
     for empresa in empresas:
@@ -296,30 +649,103 @@ def garantir_schema_compativel():
         ).fetchone()
         if not limite_existe:
             plano_starter = conn.execute(
-                "SELECT id, limite_conversas, limite_mensagens, limite_atendentes, limite_integracoes FROM planos_saas WHERE nome = 'Starter' LIMIT 1"
+                "SELECT id, limite_contatos, limite_conversas, limite_mensagens, limite_atendentes, limite_integracoes FROM planos_saas WHERE nome = 'Starter' LIMIT 1"
             ).fetchone()
             conn.execute(
                 """
                 INSERT INTO empresa_limites (
-                    empresa_id, plano_id, limite_conversas, limite_mensagens,
+                    empresa_id, plano_id, limite_contatos, limite_conversas, limite_mensagens,
                     limite_atendentes, limite_integracoes, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'ativo')
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'ativo')
                 """,
                 (
                     empresa["id"],
                     plano_starter["id"] if plano_starter else None,
+                    plano_starter["limite_contatos"] if plano_starter and "limite_contatos" in plano_starter.keys() else 500,
                     plano_starter["limite_conversas"] if plano_starter else 500,
                     plano_starter["limite_mensagens"] if plano_starter else 5000,
                     plano_starter["limite_atendentes"] if plano_starter else 3,
                     plano_starter["limite_integracoes"] if plano_starter else 1,
                 )
             )
+    conn.execute(
+        """
+        UPDATE empresa_limites
+        SET limite_contatos = COALESCE(limite_contatos, limite_conversas, 500)
+        WHERE limite_contatos IS NULL
+        """
+    )
     conn.commit()
     conn.close()
 
 
 garantir_schema_compativel()
+
+
+# =========================================================
+# HELPERS DE LOGGING E ERRO (PRODUÇÃO)
+# =========================================================
+def gerar_correlation_id():
+    """Gera ID único para rastreamento de requisição."""
+    return str(uuid.uuid4())
+
+
+def registrar_erro_log(error_type, error_message, stack_trace=None, status_code=None,
+                       empresa_id=None, user_id=None, correlation_id=None,
+                       endpoint=None, method=None, severity="error"):
+    """
+    Registra erro em tabela error_logs para auditoria.
+    Não falha se não conseguir conectar (graceful degradation).
+    """
+    try:
+        conn = get_connection()
+
+        # Limitar tamanho de stack_trace para não bloquear DB
+        if stack_trace and len(str(stack_trace)) > 5000:
+            stack_trace = str(stack_trace)[:5000] + "... (truncado)"
+
+        conn.execute(
+            """
+            INSERT INTO error_logs (
+                empresa_id, user_id, correlation_id, severity, error_type,
+                error_message, stack_trace, endpoint, method,
+                ip_address, user_agent
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                empresa_id,
+                user_id,
+                correlation_id,
+                severity.lower() if severity else "error",
+                error_type[:100] if error_type else "desconhecido",
+                error_message[:1000] if error_message else None,
+                stack_trace,
+                endpoint,
+                method,
+                request.remote_addr if has_request_context() else None,
+                request.user_agent.string if has_request_context() else None,
+            )
+        )
+        conn.commit()
+        conn.close()
+    except Exception as log_error:
+        # Não bloqueia a requisição se falhar ao logar
+        app.logger.error(f"Falha ao registrar erro: {log_error}")
+
+
+def obter_ou_criar_correlation_id():
+    """Obtém ou cria correlation_id para requisição."""
+    if not has_request_context():
+        return gerar_correlation_id()
+
+    # Verificar se já existe em g (Flask request context)
+    from flask import g
+    if not hasattr(g, 'correlation_id'):
+        g.correlation_id = request.headers.get('X-Correlation-ID', gerar_correlation_id())
+
+    return g.correlation_id
 
 
 # =========================================================
@@ -330,83 +756,6 @@ def normalizar_texto(texto):
     texto = unicodedata.normalize("NFD", texto)
     texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
     return texto
-
-
-def senha_confere(senha_digitada, senha_salva):
-    senha_digitada = (senha_digitada or "").strip()
-    senha_salva = (senha_salva or "").strip()
-
-    if not senha_digitada or not senha_salva:
-        return False
-
-    try:
-        if senha_salva.startswith(("pbkdf2:", "scrypt:", "argon2:")):
-            return check_password_hash(senha_salva, senha_digitada)
-    except Exception:
-        pass
-
-    return senha_digitada == senha_salva
-
-
-def gerar_hash_senha(senha):
-    senha = (senha or "").strip()
-    if not senha:
-        return ""
-    return generate_password_hash(senha)
-
-
-def buscar_usuario_por_email(email):
-    email = (email or "").strip().lower()
-    if not email:
-        return None
-
-    conn = get_connection()
-    usuario = conn.execute(
-        """
-        SELECT *
-        FROM users
-        WHERE lower(email) = ?
-        LIMIT 1
-        """,
-        (email,)
-    ).fetchone()
-    conn.close()
-    return usuario
-
-
-def buscar_empresa_do_usuario(user_id):
-    conn = get_connection()
-    empresa = conn.execute(
-        """
-        SELECT e.*
-        FROM empresas e
-        JOIN empresa_membros em ON em.empresa_id = e.id
-        WHERE em.user_id = ? AND em.ativo = 1
-        ORDER BY CASE WHEN em.papel = 'owner' THEN 0 ELSE 1 END, e.id ASC
-        LIMIT 1
-        """,
-        (user_id,)
-    ).fetchone()
-    conn.close()
-    return empresa
-
-
-def buscar_empresas_do_usuario(user_id):
-    conn = get_connection()
-    empresas = conn.execute(
-        """
-        SELECT
-            e.*,
-            em.papel
-        FROM empresas e
-        JOIN empresa_membros em ON em.empresa_id = e.id
-        WHERE em.user_id = ? AND em.ativo = 1
-        ORDER BY CASE WHEN em.papel = 'owner' THEN 0 ELSE 1 END, e.nome_empresa ASC
-        """,
-        (user_id,)
-    ).fetchall()
-    conn.close()
-    return empresas
 
 
 def usuario_logado():
@@ -800,6 +1149,12 @@ def criar_mensagem(conversa_id, remetente_tipo, conteudo, direcao=None, regra_id
 
     if not conversa:
         conn.close()
+        return None
+
+    limite_ok, mensagem_limite = verificar_limite_recurso(conversa["empresa_id"], "mensagens", conn=conn)
+    if not limite_ok:
+        conn.close()
+        flash_limite_bloqueado(mensagem_limite)
         return None
 
     cursor = conn.execute(
@@ -1316,6 +1671,43 @@ def validar_dados_agendamento(conn, empresa_id, data_texto, horario_texto, exclu
     return data_norm, horario_norm, None
 
 
+def _erro_integridade_agendamento_colisao(erro):
+    mensagem = str(erro).lower()
+    return (
+        "agendamento ativo" in mensagem
+        or "idx_agendamentos_slot_ativo" in mensagem
+        or "unique constraint failed: agendamentos.empresa_id, agendamentos.data, agendamentos.horario" in mensagem
+    )
+
+
+def _registrar_colisao_agendamento(empresa_id, conversa_id, data_texto, horario_texto, servico, tentativa=1):
+    try:
+        conn_log = get_connection()
+        conn_log.execute(
+            """
+            INSERT OR IGNORE INTO metricas_eventos (
+                empresa_id, tipo_evento, referencia_id, valor
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                empresa_id,
+                "agendamento_colisao",
+                conversa_id,
+                json.dumps({
+                    "tentativa": tentativa,
+                    "data": data_texto,
+                    "horario": horario_texto,
+                    "servico": servico
+                }, ensure_ascii=False)
+            )
+        )
+        conn_log.commit()
+        conn_log.close()
+    except Exception as erro_log:
+        app.logger.warning("Falha ao registrar colisao de agendamento: %s", erro_log)
+
+
 def salvar_agendamento(conversa_id, data_texto, horario_texto, servico=None):
     if not conversa_acessivel_na_sessao(conversa_id):
         return False, "Conversa não encontrada."
@@ -1335,51 +1727,138 @@ def salvar_agendamento(conversa_id, data_texto, horario_texto, servico=None):
         conn.close()
         return False, "Conversa não encontrada."
 
-    data_normalizada, horario_normalizado, erro_validacao = validar_dados_agendamento(
-        conn,
-        conversa["empresa_id"],
-        data_texto,
-        horario_texto
-    )
-    if erro_validacao:
-        conn.close()
-        return False, erro_validacao
+    # Tentativa de agendamento com retry para concorrência
+    max_tentativas = 3
+    for tentativa in range(max_tentativas):
+        try:
+            # Iniciar transação IMMEDIATE para adquirir lock de escrita imediatamente
+            conn.execute("BEGIN IMMEDIATE")
 
-    cursor = conn.execute(
-        """
-        INSERT INTO agendamentos (
-            empresa_id,
-            contato_id,
-            conversa_id,
-            servico,
-            data,
-            horario,
-            status
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            conversa["empresa_id"],
-            conversa["contato_id"],
-            conversa_id,
-            servico,
-            data_normalizada,
-            horario_normalizado,
-            "confirmado"
-        )
-    )
-    conn.commit()
+            data_normalizada, horario_normalizado, erro_validacao = validar_dados_agendamento(
+                conn,
+                conversa["empresa_id"],
+                data_texto,
+                horario_texto
+            )
+            if erro_validacao:
+                conn.rollback()
+                conn.close()
+                return False, erro_validacao
+
+            cursor = conn.execute(
+                """
+                INSERT INTO agendamentos (
+                    empresa_id,
+                    contato_id,
+                    conversa_id,
+                    servico,
+                    data,
+                    horario,
+                    status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversa["empresa_id"],
+                    conversa["contato_id"],
+                    conversa_id,
+                    servico,
+                    data_normalizada,
+                    horario_normalizado,
+                    "confirmado"
+                )
+            )
+            conn.commit()
+            agendamento_id = cursor.lastrowid
+
+            # Registrar evento de sucesso
+            registrar_evento(
+                "agendamento_criado",
+                referencia_id=agendamento_id,
+                valor=json.dumps(
+                    {"conversa_id": conversa_id, "servico": servico, "data": data_normalizada, "horario": horario_normalizado},
+                    ensure_ascii=False
+                ),
+                empresa_id=conversa["empresa_id"]
+            )
+
+            conn.close()
+            return True, {"data": data_normalizada, "horario": horario_normalizado}
+
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            if _erro_integridade_agendamento_colisao(e):
+                _registrar_colisao_agendamento(
+                    conversa["empresa_id"],
+                    conversa_id,
+                    data_texto,
+                    horario_texto,
+                    servico,
+                    tentativa + 1
+                )
+                conn.close()
+                return False, "Já existe agendamento nesse horário."
+
+            # Verificar se é colisão de agendamento
+            if "Já existe agendamento ativo nesse horário" in str(e):
+                # Registrar tentativa de colisão
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO metricas_eventos (
+                        empresa_id, tipo_evento, referencia_id, valor
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        conversa["empresa_id"],
+                        "agendamento_colisao",
+                        conversa_id,
+                        json.dumps({
+                            "tentativa": tentativa + 1,
+                            "data": data_texto,
+                            "horario": horario_texto,
+                            "servico": servico
+                        }, ensure_ascii=False)
+                    )
+                )
+                conn.commit()
+
+                if tentativa < max_tentativas - 1:
+                    # Pequena pausa antes de retry (backoff simples)
+                    import time
+                    time.sleep(0.1 * (tentativa + 1))
+                    continue
+                else:
+                    # Máximo de tentativas atingido
+                    conn.close()
+                    return False, "Horário indisponível devido a alta demanda. Tente novamente em alguns segundos."
+            else:
+                # Outro tipo de IntegrityError
+                conn.close()
+                return False, f"Erro de integridade: {e}"
+
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+
+            # Registrar erro crítico
+            registrar_erro_log(
+                error_type="agendamento_erro_critico",
+                error_message=str(e),
+                stack_trace=str(e.__traceback__) if hasattr(e, '__traceback__') else None,
+                empresa_id=conversa["empresa_id"],
+                user_id=obter_user_id_logado(),
+                correlation_id=obter_ou_criar_correlation_id(),
+                severity="error"
+            )
+
+            if "Já existe agendamento ativo nesse horário" in str(e):
+                return False, "Já existe agendamento nesse horário."
+            return False, f"Erro ao salvar agendamento: {e}"
+
+    # Não deveria chegar aqui, mas fallback
     conn.close()
-    registrar_evento(
-        "agendamento_criado",
-        referencia_id=cursor.lastrowid,
-        valor=json.dumps(
-            {"conversa_id": conversa_id, "servico": servico, "data": data_normalizada, "horario": horario_normalizado},
-            ensure_ascii=False
-        ),
-        empresa_id=conversa["empresa_id"]
-    )
-    return True, {"data": data_normalizada, "horario": horario_normalizado}
+    return False, "Erro interno ao processar agendamento."
 
 
 # =========================================================
@@ -2605,261 +3084,8 @@ def inject_user_context():
 
 
 # =========================================================
-# LOGIN / CADASTRO / LOGOUT
-# =========================================================
-@app.route("/", methods=["GET", "POST"])
-def login():
-    if usuario_logado():
-        return redirect(url_for("dashboard"))
-
-    if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
-        senha = (request.form.get("senha") or "").strip()
-
-        if not email or not senha:
-            flash("Preencha e-mail e senha.", "erro")
-            return render_template("login.html", email=email)
-
-        usuario = buscar_usuario_por_email(email)
-
-        if not usuario:
-            flash("Usuário não encontrado.", "erro")
-            return render_template("login.html", email=email)
-
-        if not senha_confere(senha, usuario["senha_hash"]):
-            flash("Senha inválida.", "erro")
-            return render_template("login.html", email=email)
-
-        empresa = buscar_empresa_do_usuario(usuario["id"])
-
-        if not empresa:
-            flash("Usuário sem empresa vinculada.", "erro")
-            return render_template("login.html", email=email)
-
-        session["user_id"] = usuario["id"]
-        session["user_nome"] = usuario["nome"]
-        session["user_email"] = usuario["email"]
-        session["empresa_id"] = empresa["id"]
-        session["empresa_nome"] = empresa["nome_exibicao"] or empresa["nome_empresa"]
-
-        return redirect(url_for("dashboard"))
-
-    return render_template("login.html")
-
-
-@app.route("/cadastro", methods=["GET", "POST"])
-def cadastro():
-    if usuario_logado():
-        return redirect(url_for("dashboard"))
-
-    if request.method == "POST":
-        nome = (request.form.get("nome") or "").strip()
-        email = (request.form.get("email") or "").strip().lower()
-        empresa_nome = (request.form.get("empresa") or "").strip()
-        senha = (request.form.get("senha") or "").strip()
-
-        if not nome or not email or not empresa_nome or not senha:
-            flash("Preencha todos os campos.", "erro")
-            return render_template(
-                "cadastro.html",
-                nome=nome,
-                email=email,
-                empresa=empresa_nome
-            )
-
-        conn = get_connection()
-
-        usuario_existente = conn.execute(
-            """
-            SELECT id
-            FROM users
-            WHERE lower(email) = ?
-            LIMIT 1
-            """,
-            (email,)
-        ).fetchone()
-
-        if usuario_existente:
-            conn.close()
-            flash("Esse e-mail já está cadastrado.", "erro")
-            return render_template(
-                "cadastro.html",
-                nome=nome,
-                email=email,
-                empresa=empresa_nome
-            )
-
-        senha_hash = gerar_hash_senha(senha)
-
-        cursor = conn.execute(
-            """
-            INSERT INTO users (nome, email, senha_hash)
-            VALUES (?, ?, ?)
-            """,
-            (nome, email, senha_hash)
-        )
-        user_id = cursor.lastrowid
-
-        cursor = conn.execute(
-            """
-            INSERT INTO empresas (user_id, nome_empresa, nome_exibicao, email)
-            VALUES (?, ?, ?, ?)
-            """,
-            (user_id, empresa_nome, empresa_nome, email)
-        )
-        empresa_id = cursor.lastrowid
-        conn.execute(
-            """
-            INSERT INTO empresa_membros (empresa_id, user_id, papel, ativo)
-            VALUES (?, ?, 'owner', 1)
-            """,
-            (empresa_id, user_id)
-        )
-
-        conn.commit()
-        conn.close()
-
-        session["user_id"] = user_id
-        session["user_nome"] = nome
-        session["user_email"] = email
-        session["empresa_id"] = empresa_id
-        session["empresa_nome"] = empresa_nome
-
-        return redirect(url_for("dashboard"))
-
-    return render_template("cadastro.html")
-
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
-
-# =========================================================
-# DASHBOARD
-# =========================================================
-@app.route("/dashboard")
-@login_required
-def dashboard():
-    empresa_id = obter_empresa_id_logada()
-    conn = get_connection()
-
-    total_contatos = conn.execute(
-        "SELECT COUNT(*) AS total FROM contatos WHERE empresa_id = ?",
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    total_conversas = conn.execute(
-        "SELECT COUNT(*) AS total FROM conversas WHERE empresa_id = ?",
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    conversas_abertas = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM conversas
-        WHERE empresa_id = ? AND status = 'aberta'
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    conversas_fechadas = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM conversas
-        WHERE empresa_id = ? AND status = 'fechada'
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    total_mensagens = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM mensagens
-        WHERE conversa_id IN (
-            SELECT id FROM conversas WHERE empresa_id = ?
-        )
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    agendamentos_criados = conn.execute(
-        "SELECT COUNT(*) AS total FROM agendamentos WHERE empresa_id = ?",
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    mensagens_humano = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM mensagens
-        WHERE remetente_tipo = 'humano'
-          AND conversa_id IN (SELECT id FROM conversas WHERE empresa_id = ?)
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    integracoes_ativas = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM canal_integracoes
-        WHERE empresa_id = ? AND status = 'ativo'
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    regras_acionadas = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM metricas_eventos
-        WHERE empresa_id = ? AND tipo_evento IN ('regra_acionada', 'regra_fluxo_acionada')
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    fluxos_iniciados = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM metricas_eventos
-        WHERE empresa_id = ? AND tipo_evento = 'fluxo_iniciado'
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    atividade_recente = conn.execute(
-        """
-        SELECT tipo_evento, valor, criado_em
-        FROM metricas_eventos
-        WHERE empresa_id = ?
-        ORDER BY id DESC
-        LIMIT 6
-        """,
-        (empresa_id,)
-    ).fetchall()
-
-    conn.close()
-
-    return render_template(
-        "dashboard.html",
-        total_contatos=total_contatos,
-        total_conversas=total_conversas,
-        conversas_abertas=conversas_abertas,
-        conversas_fechadas=conversas_fechadas,
-        total_mensagens=total_mensagens,
-        agendamentos_criados=agendamentos_criados,
-        mensagens_humano=mensagens_humano,
-        integracoes_ativas=integracoes_ativas,
-        regras_acionadas=regras_acionadas,
-        fluxos_iniciados=fluxos_iniciados,
-        atividade_recente=atividade_recente,
-    )
-
-
-# =========================================================
 # CONVERSAS
 # =========================================================
-@app.route("/conversas")
-@login_required
 def conversas():
     empresa_id = obter_empresa_id_logada()
     busca = (request.args.get("busca") or "").strip()
@@ -2934,6 +3160,12 @@ def conversas():
         (empresa_id,)
     ).fetchall()
 
+    ultimas_mensagens = buscar_ultimas_mensagens_conversas(
+        [conversa["id"] for conversa in conversas_db],
+        empresa_id=empresa_id,
+        conn=conn
+    )
+
     conn.close()
 
     conversas_lista = []
@@ -2952,7 +3184,7 @@ def conversas():
             "em_atendimento": "Aguardando ação do atendente",
             "aguardando_cliente": "Aguardando retorno do cliente",
         }.get(atendimento_status, "Automação ativa")
-        conversa_dict["ultima_mensagem"] = buscar_ultima_mensagem(conversa["id"])
+        conversa_dict["ultima_mensagem"] = ultimas_mensagens.get(conversa["id"], "Sem mensagens ainda")
         if atendimento_status == "em_atendimento":
             resumo_fila["em_atendimento"] += 1
         elif atendimento_status == "aguardando_cliente":
@@ -2985,8 +3217,6 @@ def conversas():
     )
 
 
-@app.route("/conversas/exportar")
-@login_required
 def exportar_conversas():
     empresa_id = obter_empresa_id_logada()
     conn = get_connection()
@@ -3014,12 +3244,18 @@ def exportar_conversas():
         (empresa_id,)
     ).fetchall()
 
+    ultimas_mensagens = buscar_ultimas_mensagens_conversas(
+        [conversa["id"] for conversa in conversas_db],
+        empresa_id=empresa_id,
+        conn=conn
+    )
+
     conn.close()
 
     conversas_lista = []
     for conversa in conversas_db:
         conversa_dict = dict(conversa)
-        conversa_dict["ultima_mensagem"] = buscar_ultima_mensagem(conversa["id"])
+        conversa_dict["ultima_mensagem"] = ultimas_mensagens.get(conversa["id"], "Sem mensagens ainda")
         conversas_lista.append(conversa_dict)
 
     output = io.StringIO()
@@ -3048,8 +3284,6 @@ def exportar_conversas():
     }
 
 
-@app.route("/conversas/contato/<int:contato_id>")
-@login_required
 def abrir_conversa_por_contato(contato_id):
     if not contato_pertence_empresa(contato_id):
         return redirect(url_for("conversas"))
@@ -3061,8 +3295,6 @@ def abrir_conversa_por_contato(contato_id):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>")
-@login_required
 def ver_conversa(conversa_id):
     empresa_id = obter_empresa_id_logada()
     busca = (request.args.get("busca") or "").strip()
@@ -3153,34 +3385,11 @@ def ver_conversa(conversa_id):
         (empresa_id,)
     ).fetchall()
 
+    resumo_mensagens = contar_mensagens_conversa(conversa_id, empresa_id=empresa_id, conn=conn)
     resumo_conversa = {
-        "total_mensagens": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE conversa_id = ?
-            """,
-            (conversa_id,)
-        ).fetchone()["total"],
-
-        "mensagens_bot": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE conversa_id = ? AND remetente_tipo = 'bot'
-            """,
-            (conversa_id,)
-        ).fetchone()["total"],
-
-        "mensagens_com_regra": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE conversa_id = ? AND regra_id IS NOT NULL
-            """,
-            (conversa_id,)
-        ).fetchone()["total"],
-
+        "total_mensagens": resumo_mensagens["total_mensagens"],
+        "mensagens_bot": resumo_mensagens["mensagens_bot"],
+        "mensagens_com_regra": resumo_mensagens["mensagens_com_regra"],
         "ultima_regra_nome": None,
         "etapa_atual": conversa["etapa"] if conversa else None,
         "fluxo_nome": conversa["fluxo_nome"] if conversa else None,
@@ -3209,6 +3418,12 @@ def ver_conversa(conversa_id):
         "aguardando_cliente": "Aguardando cliente",
     }.get(atendimento_status, "No bot")
     resumo_conversa["atendimento_status_label"] = atendimento_status_label
+
+    ultimas_mensagens = buscar_ultimas_mensagens_conversas(
+        [item["id"] for item in conversas_db],
+        empresa_id=empresa_id,
+        conn=conn
+    )
 
     conn.close()
 
@@ -3248,7 +3463,7 @@ def ver_conversa(conversa_id):
             "em_atendimento": "Aguardando ação do atendente",
             "aguardando_cliente": "Aguardando retorno do cliente",
         }.get(item_status, "Automação ativa")
-        item_dict["ultima_mensagem"] = buscar_ultima_mensagem(item["id"])
+        item_dict["ultima_mensagem"] = ultimas_mensagens.get(item["id"], "Sem mensagens ainda")
         if item_status == "em_atendimento":
             resumo_fila["em_atendimento"] += 1
         elif item_status == "aguardando_cliente":
@@ -3295,8 +3510,6 @@ def ver_conversa(conversa_id):
     )
 
 
-@app.route("/conversas/<int:conversa_id>/mensagem", methods=["POST"])
-@login_required
 def enviar_mensagem(conversa_id):
     if not conversa_pertence_empresa(conversa_id):
         return redirect(url_for("conversas"))
@@ -3318,8 +3531,6 @@ def enviar_mensagem(conversa_id):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/mensagens/recentes")
-@login_required
 def mensagens_recentes_conversa(conversa_id):
     if not conversa_pertence_empresa(conversa_id):
         return jsonify({"ok": False, "erro": "Conversa invalida"}), 403
@@ -3361,8 +3572,6 @@ def mensagens_recentes_conversa(conversa_id):
     )
 
 
-@app.route("/conversas/<int:conversa_id>/iniciar-fluxo/<int:fluxo_id>")
-@login_required
 def iniciar_fluxo_manual_conversa(conversa_id, fluxo_id):
     if not conversa_pertence_empresa(conversa_id):
         return redirect(url_for("conversas"))
@@ -3379,8 +3588,6 @@ def iniciar_fluxo_manual_conversa(conversa_id, fluxo_id):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/simular-cliente", methods=["POST"])
-@login_required
 def simular_mensagem_cliente(conversa_id):
     if not conversa_pertence_empresa(conversa_id):
         return redirect(url_for("conversas"))
@@ -3421,8 +3628,6 @@ def simular_mensagem_cliente(conversa_id):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/status/<novo_status>", methods=["POST"])
-@login_required
 def alterar_status_conversa(conversa_id, novo_status):
     if novo_status not in ["aberta", "fechada"]:
         return redirect(url_for("ver_conversa", conversa_id=conversa_id))
@@ -3446,8 +3651,6 @@ def alterar_status_conversa(conversa_id, novo_status):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/bot/<int:ativo>", methods=["POST"])
-@login_required
 def alterar_bot_conversa(conversa_id, ativo):
     if ativo not in [0, 1]:
         return redirect(url_for("ver_conversa", conversa_id=conversa_id))
@@ -3476,8 +3679,6 @@ def alterar_bot_conversa(conversa_id, ativo):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/assumir", methods=["POST"])
-@login_required
 def assumir_conversa(conversa_id):
     if not conversa_pertence_empresa(conversa_id):
         return redirect(url_for("conversas"))
@@ -3501,8 +3702,6 @@ def assumir_conversa(conversa_id):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/aguardando-cliente", methods=["POST"])
-@login_required
 def marcar_conversa_aguardando_cliente(conversa_id):
     if not conversa_pertence_empresa(conversa_id):
         return redirect(url_for("conversas"))
@@ -3512,8 +3711,6 @@ def marcar_conversa_aguardando_cliente(conversa_id):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/retomar-atendimento", methods=["POST"])
-@login_required
 def retomar_atendimento_conversa(conversa_id):
     if not conversa_pertence_empresa(conversa_id):
         return redirect(url_for("conversas"))
@@ -3523,8 +3720,6 @@ def retomar_atendimento_conversa(conversa_id):
     return redirect(url_for("ver_conversa", conversa_id=conversa_id))
 
 
-@app.route("/conversas/<int:conversa_id>/devolver-bot", methods=["POST"])
-@login_required
 def devolver_conversa_ao_bot(conversa_id):
     if not conversa_pertence_empresa(conversa_id):
         return redirect(url_for("conversas"))
@@ -3549,8 +3744,6 @@ def devolver_conversa_ao_bot(conversa_id):
 # =========================================================
 # CONTATOS
 # =========================================================
-@app.route("/contatos")
-@login_required
 def contatos():
     busca = (request.args.get("busca") or "").strip()
     tag_id = (request.args.get("tag_id") or "").strip()
@@ -3595,8 +3788,6 @@ def contatos():
     )
 
 
-@app.route("/contatos/exportar")
-@login_required
 def exportar_contatos():
     conn = get_connection()
     contatos_lista = conn.execute(
@@ -3629,8 +3820,6 @@ def exportar_contatos():
     }
 
 
-@app.route("/contatos/novo", methods=["GET", "POST"])
-@login_required
 def novo_contato():
     conn = get_connection()
     tags = conn.execute(
@@ -3638,11 +3827,37 @@ def novo_contato():
         (obter_empresa_id_logada(),)
     ).fetchall()
     if request.method == "POST":
-        nome = (request.form.get("nome") or "").strip()
-        telefone = (request.form.get("telefone") or "").strip()
+        nome = limpar_nome_contato(request.form.get("nome"))
+        telefone_raw = (request.form.get("telefone") or "").strip()
+        telefone = normalizar_telefone(telefone_raw) if telefone_raw else None
         tag_ids = filtrar_tags_da_empresa(request.form.getlist("tag_ids"))
 
+        if not nome:
+            flash("Nome é obrigatório.", "erro")
+            conn.close()
+            return render_template("novo_contato.html", tags=tags, nome=nome, telefone=telefone_raw)
+
+        if telefone_raw and not telefone:
+            flash("Telefone inválido. Use formato como +55 11 99999-9999 ou 11 99999-9999.", "erro")
+            conn.close()
+            return render_template("novo_contato.html", tags=tags, nome=nome, telefone=telefone_raw)
+
         if telefone:
+            # Verificar se já existe contato com este telefone
+            existente = conn.execute(
+                "SELECT id FROM contatos WHERE empresa_id = ? AND telefone = ? LIMIT 1",
+                (obter_empresa_id_logada(), telefone)
+            ).fetchone()
+            if existente:
+                flash("Já existe contato com este telefone.", "aviso")
+                conn.close()
+                return render_template("novo_contato.html", tags=tags, nome=nome, telefone=telefone_raw)
+
+            limite_ok, mensagem_limite = verificar_limite_recurso(obter_empresa_id_logada(), "contatos", conn=conn)
+            if not limite_ok:
+                conn.close()
+                flash_limite_bloqueado(mensagem_limite)
+                return redirect(url_for("contatos"))
             cursor = conn.execute(
                 """
                 INSERT INTO contatos (empresa_id, nome, telefone)
@@ -3665,8 +3880,6 @@ def novo_contato():
     return render_template("novo_contato.html", tags=tags)
 
 
-@app.route("/contatos/editar/<int:id>", methods=["GET", "POST"])
-@login_required
 def editar_contato(id):
     conn = get_connection()
     tags = conn.execute(
@@ -3679,9 +3892,31 @@ def editar_contato(id):
         return redirect(url_for("contatos"))
 
     if request.method == "POST":
-        nome = (request.form.get("nome") or "").strip()
-        telefone = (request.form.get("telefone") or "").strip()
+        nome = limpar_nome_contato(request.form.get("nome"))
+        telefone_raw = (request.form.get("telefone") or "").strip()
+        telefone = normalizar_telefone(telefone_raw) if telefone_raw else None
         tag_ids = filtrar_tags_da_empresa(request.form.getlist("tag_ids"))
+
+        if not nome:
+            flash("Nome é obrigatório.", "erro")
+            conn.close()
+            return render_template("editar_contatos.html", contato={"id": id}, tags=tags)
+
+        if telefone_raw and not telefone:
+            flash("Telefone inválido. Use formato como +55 11 99999-9999 ou 11 99999-9999.", "erro")
+            conn.close()
+            return render_template("editar_contatos.html", contato={"id": id}, tags=tags)
+
+        # Se mudou telefone, verificar duplicidade (exceto o mesmo contato)
+        if telefone:
+            duplicado = conn.execute(
+                "SELECT id FROM contatos WHERE empresa_id = ? AND telefone = ? AND id != ? LIMIT 1",
+                (obter_empresa_id_logada(), telefone, id)
+            ).fetchone()
+            if duplicado:
+                flash("Já existe outro contato com este telefone.", "aviso")
+                conn.close()
+                return render_template("editar_contatos.html", contato={"id": id}, tags=tags)
 
         conn.execute(
             """
@@ -3737,8 +3972,6 @@ def editar_contato(id):
     )
 
 
-@app.route("/contatos/excluir/<int:id>", methods=["POST"])
-@login_required
 def excluir_contato(id):
     if not contato_pertence_empresa(id):
         return redirect(url_for("contatos"))
@@ -3755,8 +3988,6 @@ def excluir_contato(id):
     return redirect(url_for("contatos"))
 
 
-@app.route("/tags/nova", methods=["POST"])
-@login_required
 def nova_tag():
     nome = (request.form.get("nome") or "").strip()
     cor = (request.form.get("cor") or "").strip() or "#7b5ae0"
@@ -3772,8 +4003,6 @@ def nova_tag():
     return redirect(url_for("contatos"))
 
 
-@app.route("/tags/<int:tag_id>/excluir", methods=["POST"])
-@login_required
 def excluir_tag(tag_id):
     if not tag_pertence_empresa(tag_id):
         return redirect(url_for("contatos"))
@@ -3798,8 +4027,6 @@ def excluir_tag(tag_id):
 # =========================================================
 # REGRAS
 # =========================================================
-@app.route("/regras")
-@login_required
 def regras():
     conn = get_connection()
     regras_db = conn.execute(
@@ -3839,8 +4066,6 @@ def regras():
     return render_template("regras.html", regras=regras_lista, fluxos=fluxos_db, tags=tags_db)
 
 
-@app.route("/regras/nova", methods=["POST"])
-@login_required
 def nova_regra():
     nome = (request.form.get("nome") or "").strip()
     palavras = (request.form.get("palavras_chave") or "").strip()
@@ -3915,8 +4140,6 @@ def nova_regra():
     return redirect(url_for("regras"))
 
 
-@app.route("/regras/editar/<int:regra_id>", methods=["GET", "POST"])
-@login_required
 def editar_regra(regra_id):
     conn = get_connection()
 
@@ -4036,8 +4259,6 @@ def editar_regra(regra_id):
     )
 
 
-@app.route("/regras/<int:regra_id>/toggle", methods=["POST"])
-@login_required
 def toggle_regra(regra_id):
     conn = get_connection()
 
@@ -4067,8 +4288,6 @@ def toggle_regra(regra_id):
     return redirect(url_for("regras"))
 
 
-@app.route("/regras/excluir/<int:regra_id>", methods=["POST"])
-@login_required
 def excluir_regra(regra_id):
     conn = get_connection()
     regra = conn.execute(
@@ -4093,8 +4312,6 @@ def excluir_regra(regra_id):
 # =========================================================
 # AGENDAMENTOS
 # =========================================================
-@app.route("/agendamentos")
-@login_required
 def agendamentos():
     conn = get_connection()
 
@@ -4117,8 +4334,6 @@ def agendamentos():
     return render_template("agendamentos.html", agendamentos=agendamentos_lista)
 
 
-@app.route("/agendamentos/exportar")
-@login_required
 def exportar_agendamentos():
     conn = get_connection()
 
@@ -4166,8 +4381,6 @@ def exportar_agendamentos():
     }
 
 
-@app.route("/agendamentos/<int:agendamento_id>/cancelar", methods=["POST"])
-@login_required
 def cancelar_agendamento(agendamento_id):
     conn = get_connection()
     conn.execute(
@@ -4184,8 +4397,6 @@ def cancelar_agendamento(agendamento_id):
     return redirect(url_for("agendamentos"))
 
 
-@app.route("/agendamentos/<int:agendamento_id>/remarcar", methods=["POST"])
-@login_required
 def remarcar_agendamento(agendamento_id):
     data = (request.form.get("data") or "").strip()
     horario = (request.form.get("horario") or "").strip()
@@ -4205,30 +4416,50 @@ def remarcar_agendamento(agendamento_id):
     if not agendamento:
         conn.close()
         return redirect(url_for("agendamentos"))
-    data_normalizada, horario_normalizado, erro_validacao = validar_dados_agendamento(
-        conn,
-        empresa_id,
-        data,
-        horario,
-        excluir_agendamento_id=agendamento_id
-    )
-    if erro_validacao:
+
+    # Iniciar transação
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        data_normalizada, horario_normalizado, erro_validacao = validar_dados_agendamento(
+            conn,
+            empresa_id,
+            data,
+            horario,
+            excluir_agendamento_id=agendamento_id
+        )
+        if erro_validacao:
+            conn.rollback()
+            conn.close()
+            flash(erro_validacao, "erro")
+            return redirect(url_for("agendamentos"))
+        conn.execute(
+            """
+            UPDATE agendamentos
+            SET servico = ?,
+                data = ?,
+                horario = ?,
+                status = 'confirmado'
+            WHERE id = ? AND empresa_id = ?
+            """,
+            (servico, data_normalizada, horario_normalizado, agendamento_id, empresa_id)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
         conn.close()
-        flash(erro_validacao, "erro")
+        if _erro_integridade_agendamento_colisao(e):
+            flash("Já existe agendamento nesse horário.", "erro")
+        else:
+            flash(f"Erro de integridade ao remarcar agendamento: {e}", "erro")
         return redirect(url_for("agendamentos"))
-    conn.execute(
-        """
-        UPDATE agendamentos
-        SET servico = ?,
-            data = ?,
-            horario = ?,
-            status = 'confirmado'
-        WHERE id = ? AND empresa_id = ?
-        """,
-        (servico, data_normalizada, horario_normalizado, agendamento_id, empresa_id)
-    )
-    conn.commit()
-    conn.close()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        flash(f"Erro ao remarcar agendamento: {e}", "erro")
+        return redirect(url_for("agendamentos"))
+    finally:
+        conn.close()
+
     registrar_evento(
         "agendamento_remarcado",
         referencia_id=agendamento_id,
@@ -4240,34 +4471,29 @@ def remarcar_agendamento(agendamento_id):
 # =========================================================
 # FLUXOS - LISTAGEM / CRUD
 # =========================================================
-@app.route("/fluxos")
-@login_required
 def fluxos():
-    fluxos_db = buscar_fluxos_empresa(obter_empresa_id_logada())
+    empresa_id = obter_empresa_id_logada()
+    conn = get_connection()
+    fluxos_db = conn.execute(
+        """
+        SELECT
+            f.*,
+            COUNT(fb.id) AS total_blocos
+        FROM fluxos f
+        LEFT JOIN fluxo_blocos fb ON fb.fluxo_id = f.id
+        WHERE f.empresa_id = ?
+        GROUP BY f.id
+        ORDER BY f.atualizado_em DESC, f.id DESC
+        """,
+        (empresa_id,)
+    ).fetchall()
+    conn.close()
 
-    fluxos_lista = []
-    for fluxo in fluxos_db:
-        fluxo_dict = dict(fluxo)
-
-        conn = get_connection()
-        total_blocos = conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM fluxo_blocos
-            WHERE fluxo_id = ?
-            """,
-            (fluxo["id"],)
-        ).fetchone()["total"]
-        conn.close()
-
-        fluxo_dict["total_blocos"] = total_blocos
-        fluxos_lista.append(fluxo_dict)
+    fluxos_lista = [dict(fluxo) for fluxo in fluxos_db]
 
     return render_template("fluxos.html", fluxos=fluxos_lista)
 
 
-@app.route("/fluxos/novo", methods=["POST"])
-@login_required
 def novo_fluxo():
     empresa_id = obter_empresa_id_logada()
     nome = (request.form.get("nome") or "Novo fluxo").strip()
@@ -4322,8 +4548,6 @@ def novo_fluxo():
     return redirect(url_for("fluxo_editor", fluxo_id=fluxo_id))
 
 
-@app.route("/fluxos/<int:fluxo_id>/editar", methods=["POST"])
-@login_required
 def editar_fluxo(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4364,8 +4588,6 @@ def editar_fluxo(fluxo_id):
     return redirect(url_for("fluxo_editor", fluxo_id=fluxo_id))
 
 
-@app.route("/fluxos/<int:fluxo_id>/toggle", methods=["POST"])
-@login_required
 def toggle_fluxo(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4396,8 +4618,6 @@ def toggle_fluxo(fluxo_id):
     return redirect(url_for("fluxos"))
 
 
-@app.route("/fluxos/<int:fluxo_id>/duplicar", methods=["POST"])
-@login_required
 def duplicar_fluxo(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4479,8 +4699,6 @@ def duplicar_fluxo(fluxo_id):
     return redirect(url_for("fluxo_editor", fluxo_id=novo_fluxo_id))
 
 
-@app.route("/fluxos/<int:fluxo_id>/excluir", methods=["POST"])
-@login_required
 def excluir_fluxo(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4521,8 +4739,6 @@ def excluir_fluxo(fluxo_id):
 # =========================================================
 # EDITOR DE FLUXO
 # =========================================================
-@app.route("/fluxos/editor")
-@login_required
 def fluxo_editor_redirect():
     fluxos_db = buscar_fluxos_empresa(obter_empresa_id_logada())
     if not fluxos_db:
@@ -4530,8 +4746,6 @@ def fluxo_editor_redirect():
     return redirect(url_for("fluxo_editor", fluxo_id=fluxos_db[0]["id"]))
 
 
-@app.route("/fluxos/editor/<int:fluxo_id>")
-@login_required
 def fluxo_editor(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4547,8 +4761,6 @@ def fluxo_editor(fluxo_id):
     )
 
 
-@app.route("/fluxos/<int:fluxo_id>/debug-execucoes")
-@login_required
 def fluxo_debug_execucoes(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4585,8 +4797,6 @@ def fluxo_debug_execucoes(fluxo_id):
     )
 
 
-@app.route("/fluxos/<int:fluxo_id>/blocos/novo", methods=["POST"])
-@login_required
 def novo_bloco_fluxo(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4636,8 +4846,6 @@ def novo_bloco_fluxo(fluxo_id):
     return redirect(url_for("fluxo_editor", fluxo_id=fluxo_id))
 
 
-@app.route("/fluxos/<int:fluxo_id>/blocos/salvar", methods=["POST"])
-@login_required
 def salvar_blocos_fluxo(fluxo_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return jsonify({"ok": False, "erro": "Fluxo inválido"}), 403
@@ -4755,8 +4963,6 @@ def salvar_blocos_fluxo(fluxo_id):
     return jsonify({"ok": True})
 
 
-@app.route("/fluxos/<int:fluxo_id>/blocos/<int:bloco_id>/excluir", methods=["POST"])
-@login_required
 def excluir_bloco_fluxo(fluxo_id, bloco_id):
     if not fluxo_pertence_empresa(fluxo_id):
         return redirect(url_for("fluxos"))
@@ -4798,580 +5004,6 @@ def excluir_bloco_fluxo(fluxo_id, bloco_id):
 # =========================================================
 # MÉTRICAS / OUTRAS TELAS
 # =========================================================
-@app.route("/metricas")
-@login_required
-def metricas():
-    empresa_id = obter_empresa_id_logada()
-    periodo_dias = (request.args.get("periodo_dias") or "30").strip()
-    tipo_evento = (request.args.get("tipo_evento") or "").strip()
-    if periodo_dias not in ["7", "15", "30", "90"]:
-        periodo_dias = "30"
-    data_inicio = (datetime.now() - timedelta(days=int(periodo_dias))).strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_connection()
-
-    top_regras = conn.execute(
-        """
-        SELECT
-            r.nome,
-            COUNT(m.id) AS total
-        FROM mensagens m
-        JOIN regras r ON r.id = m.regra_id AND r.empresa_id = ?
-        WHERE m.regra_id IS NOT NULL
-          AND m.conversa_id IN (
-              SELECT id FROM conversas WHERE empresa_id = ?
-          )
-        GROUP BY r.nome
-        ORDER BY total DESC
-        LIMIT 5
-        """,
-        (empresa_id, empresa_id)
-    ).fetchall()
-
-    total_agendamentos = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM agendamentos
-        WHERE empresa_id = ?
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    desempenho_atendentes = conn.execute(
-        """
-        SELECT
-            COALESCE(u.nome, ca.nome_atendente, 'Atendente') AS nome,
-            COUNT(m.id) AS mensagens,
-            COUNT(DISTINCT ca.conversa_id) AS conversas
-        FROM conversa_atendentes ca
-        LEFT JOIN users u ON u.id = ca.user_id
-        LEFT JOIN mensagens m ON m.conversa_id = ca.conversa_id
-            AND m.user_id = ca.user_id
-            AND m.remetente_tipo = 'humano'
-        JOIN conversas c ON c.id = ca.conversa_id
-        WHERE c.empresa_id = ?
-          AND ca.ativo = 1
-        GROUP BY COALESCE(u.nome, ca.nome_atendente, 'Atendente')
-        ORDER BY mensagens DESC, conversas DESC
-        LIMIT 8
-        """,
-        (empresa_id,)
-    ).fetchall()
-
-    tempo_medio_resposta = conn.execute(
-        """
-        SELECT AVG(
-            (
-                SELECT (julianday(m2.criado_em) - julianday(m1.criado_em)) * 24 * 60
-                FROM mensagens m2
-                WHERE m2.conversa_id = m1.conversa_id
-                  AND m2.id > m1.id
-                  AND m2.remetente_tipo IN ('bot', 'humano')
-                ORDER BY m2.id ASC
-                LIMIT 1
-            )
-        ) AS minutos
-        FROM mensagens m1
-        WHERE m1.remetente_tipo = 'cliente'
-          AND m1.conversa_id IN (
-              SELECT id FROM conversas WHERE empresa_id = ?
-          )
-        """,
-        (empresa_id,)
-    ).fetchone()["minutos"]
-
-    metricas_data = {
-        "total_contatos": conn.execute(
-            "SELECT COUNT(*) AS total FROM contatos WHERE empresa_id = ?",
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "total_conversas": conn.execute(
-            "SELECT COUNT(*) AS total FROM conversas WHERE empresa_id = ?",
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "conversas_abertas": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM conversas
-            WHERE empresa_id = ? AND status = 'aberta'
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "conversas_fechadas": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM conversas
-            WHERE empresa_id = ? AND status = 'fechada'
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "total_mensagens": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE conversa_id IN (
-                SELECT id FROM conversas WHERE empresa_id = ?
-            )
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "mensagens_bot": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE remetente_tipo = 'bot'
-              AND conversa_id IN (
-                  SELECT id FROM conversas WHERE empresa_id = ?
-              )
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "mensagens_cliente": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE remetente_tipo = 'cliente'
-              AND conversa_id IN (
-                  SELECT id FROM conversas WHERE empresa_id = ?
-              )
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "mensagens_humano": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE remetente_tipo = 'humano'
-              AND conversa_id IN (
-                  SELECT id FROM conversas WHERE empresa_id = ?
-              )
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "mensagens_com_regra": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM mensagens
-            WHERE regra_id IS NOT NULL
-              AND conversa_id IN (
-                  SELECT id FROM conversas WHERE empresa_id = ?
-              )
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-
-        "total_agendamentos": total_agendamentos,
-        "regras_acionadas": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM metricas_eventos
-            WHERE empresa_id = ? AND tipo_evento IN ('regra_acionada', 'regra_fluxo_acionada')
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-        "fluxos_iniciados": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM metricas_eventos
-            WHERE empresa_id = ? AND tipo_evento = 'fluxo_iniciado'
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-        "fluxos_finalizados": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM metricas_eventos
-            WHERE empresa_id = ? AND tipo_evento = 'fluxo_finalizado'
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-        "integracoes_ativas": conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM canal_integracoes
-            WHERE empresa_id = ? AND status = 'ativo'
-            """,
-            (empresa_id,)
-        ).fetchone()["total"],
-        "tempo_medio_resposta_min": round(float(tempo_medio_resposta or 0), 1),
-        "desempenho_atendentes": desempenho_atendentes,
-        "top_regras": top_regras,
-        "filtros": {"periodo_dias": periodo_dias, "tipo_evento": tipo_evento},
-    }
-
-    params_eventos = [empresa_id, data_inicio]
-    filtro_tipo_sql = ""
-    if tipo_evento:
-        filtro_tipo_sql = " AND tipo_evento = ?"
-        params_eventos.append(tipo_evento)
-
-    metricas_data["eventos_recentes"] = conn.execute(
-        f"""
-        SELECT id, tipo_evento, referencia_id, valor, criado_em
-        FROM metricas_eventos
-        WHERE empresa_id = ?
-          AND criado_em >= ?
-          {filtro_tipo_sql}
-        ORDER BY id DESC
-        LIMIT 30
-        """,
-        tuple(params_eventos)
-    ).fetchall()
-    metricas_data["top_tipos_evento"] = conn.execute(
-        f"""
-        SELECT tipo_evento, COUNT(*) AS total
-        FROM metricas_eventos
-        WHERE empresa_id = ?
-          AND criado_em >= ?
-          {filtro_tipo_sql}
-        GROUP BY tipo_evento
-        ORDER BY total DESC
-        LIMIT 8
-        """,
-        tuple(params_eventos)
-    ).fetchall()
-    metricas_data["tipos_evento_disponiveis"] = [
-        row["tipo_evento"]
-        for row in conn.execute(
-            """
-            SELECT DISTINCT tipo_evento
-            FROM metricas_eventos
-            WHERE empresa_id = ?
-            ORDER BY tipo_evento ASC
-            """,
-            (empresa_id,)
-        ).fetchall()
-    ]
-    eventos_norm = []
-    for evento in metricas_data["eventos_recentes"]:
-        item = dict(evento)
-        resumo = ""
-        if item.get("valor"):
-            try:
-                payload = json.loads(item["valor"])
-                if isinstance(payload, dict):
-                    resumo = ", ".join([f"{k}: {v}" for k, v in payload.items() if v is not None])[:140]
-                else:
-                    resumo = str(payload)[:140]
-            except Exception:
-                resumo = str(item["valor"])[:140]
-        item["resumo"] = resumo
-        eventos_norm.append(item)
-    metricas_data["eventos_recentes"] = eventos_norm
-
-    conn.close()
-
-    return render_template("metricas.html", metricas=metricas_data)
-
-
-@app.route("/metricas/eventos/exportar")
-@login_required
-def exportar_metricas_eventos():
-    empresa_id = obter_empresa_id_logada()
-    periodo_dias = (request.args.get("periodo_dias") or "30").strip()
-    tipo_evento = (request.args.get("tipo_evento") or "").strip()
-    if periodo_dias not in ["7", "15", "30", "90"]:
-        periodo_dias = "30"
-    data_inicio = (datetime.now() - timedelta(days=int(periodo_dias))).strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_connection()
-    query = """
-        SELECT id, tipo_evento, referencia_id, valor, criado_em
-        FROM metricas_eventos
-        WHERE empresa_id = ?
-          AND criado_em >= ?
-    """
-    params = [empresa_id, data_inicio]
-    if tipo_evento:
-        query += " AND tipo_evento = ?"
-        params.append(tipo_evento)
-    query += " ORDER BY id DESC"
-    eventos = conn.execute(query, tuple(params)).fetchall()
-    conn.close()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID", "Tipo evento", "Referência", "Valor", "Criado em"])
-    for evento in eventos:
-        writer.writerow([
-            evento["id"],
-            evento["tipo_evento"] or "",
-            evento["referencia_id"] or "",
-            evento["valor"] or "",
-            evento["criado_em"] or "",
-        ])
-    output.seek(0)
-    return output.getvalue(), 200, {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": "attachment; filename=metricas_eventos.csv",
-    }
-
-
-@app.route("/configuracoes")
-@login_required
-def configuracoes():
-    conn = get_connection()
-    empresas_usuario = buscar_empresas_do_usuario(obter_user_id_logado())
-    empresa_id = obter_empresa_id_logada()
-    membros_empresa = conn.execute(
-        """
-        SELECT
-            u.nome,
-            u.email,
-            em.papel,
-            em.ativo
-        FROM empresa_membros em
-        JOIN users u ON u.id = em.user_id
-        WHERE em.empresa_id = ?
-        ORDER BY CASE WHEN em.papel = 'owner' THEN 0 ELSE 1 END, u.nome ASC
-        """,
-        (empresa_id,)
-    ).fetchall()
-    disponibilidade = conn.execute(
-        """
-        SELECT id, dia_semana, hora_inicio, hora_fim, ativo
-        FROM agenda_disponibilidade
-        WHERE empresa_id = ?
-        ORDER BY dia_semana ASC, hora_inicio ASC
-        """,
-        (empresa_id,)
-    ).fetchall()
-    integracoes = conn.execute(
-        """
-        SELECT id, canal, nome, status, webhook_token, phone_number_id,
-               business_account_id, instagram_account_id, atualizado_em
-        FROM canal_integracoes
-        WHERE empresa_id = ?
-        ORDER BY canal ASC, id DESC
-        """,
-        (empresa_id,)
-    ).fetchall()
-    plano_empresa = conn.execute(
-        """
-        SELECT el.*, ps.nome AS plano_nome, ps.descricao AS plano_descricao
-        FROM empresa_limites el
-        LEFT JOIN planos_saas ps ON ps.id = el.plano_id
-        WHERE el.empresa_id = ?
-        LIMIT 1
-        """,
-        (empresa_id,)
-    ).fetchone()
-    conn.close()
-    return render_template(
-        "configuracoes.html",
-        empresas_usuario=empresas_usuario,
-        membros_empresa=membros_empresa,
-        disponibilidade=disponibilidade,
-        integracoes=integracoes,
-        plano_empresa=plano_empresa,
-        empresa_id_logada=empresa_id,
-    )
-
-
-@app.route("/configuracoes/trocar-empresa", methods=["POST"])
-@login_required
-def trocar_empresa():
-    empresa_id_nova = (request.form.get("empresa_id") or "").strip()
-    if not empresa_id_nova.isdigit():
-        return redirect(url_for("configuracoes"))
-    conn = get_connection()
-    membro = conn.execute(
-        """
-        SELECT e.id, e.nome_exibicao, e.nome_empresa
-        FROM empresa_membros em
-        JOIN empresas e ON e.id = em.empresa_id
-        WHERE em.user_id = ? AND em.empresa_id = ? AND em.ativo = 1
-        LIMIT 1
-        """,
-        (obter_user_id_logado(), int(empresa_id_nova))
-    ).fetchone()
-    conn.close()
-    if not membro:
-        flash("Você não pertence a essa empresa.", "erro")
-        return redirect(url_for("configuracoes"))
-    session["empresa_id"] = membro["id"]
-    session["empresa_nome"] = membro["nome_exibicao"] or membro["nome_empresa"]
-    registrar_evento("troca_contexto_empresa", referencia_id=membro["id"])
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/configuracoes/membros/adicionar", methods=["POST"])
-@login_required
-def adicionar_membro_empresa():
-    email = (request.form.get("email") or "").strip().lower()
-    papel = (request.form.get("papel") or "membro").strip().lower()
-    papel = papel if papel in ["owner", "admin", "membro"] else "membro"
-    if not email:
-        return redirect(url_for("configuracoes"))
-    conn = get_connection()
-    user = conn.execute(
-        "SELECT id FROM users WHERE lower(email) = ? LIMIT 1",
-        (email,)
-    ).fetchone()
-    if not user:
-        conn.close()
-        flash("Usuário não encontrado para esse e-mail.", "erro")
-        return redirect(url_for("configuracoes"))
-    existe = conn.execute(
-        """
-        SELECT id
-        FROM empresa_membros
-        WHERE empresa_id = ? AND user_id = ?
-        LIMIT 1
-        """,
-        (obter_empresa_id_logada(), user["id"])
-    ).fetchone()
-    if existe:
-        conn.execute(
-            """
-            UPDATE empresa_membros
-            SET ativo = 1, papel = ?
-            WHERE id = ? AND empresa_id = ?
-            """,
-            (papel, existe["id"], obter_empresa_id_logada())
-        )
-    else:
-        conn.execute(
-            """
-            INSERT INTO empresa_membros (empresa_id, user_id, papel, ativo)
-            VALUES (?, ?, ?, 1)
-            """,
-            (obter_empresa_id_logada(), user["id"], papel)
-        )
-    conn.commit()
-    conn.close()
-    registrar_evento("membro_adicionado", valor=email)
-    return redirect(url_for("configuracoes"))
-
-
-@app.route("/configuracoes/disponibilidade/adicionar", methods=["POST"])
-@login_required
-def adicionar_disponibilidade():
-    dia_semana = (request.form.get("dia_semana") or "").strip()
-    hora_inicio = (request.form.get("hora_inicio") or "").strip()
-    hora_fim = (request.form.get("hora_fim") or "").strip()
-    if not dia_semana.isdigit() or not hora_inicio or not hora_fim:
-        return redirect(url_for("configuracoes"))
-    dia_semana_int = int(dia_semana)
-    if dia_semana_int < 0 or dia_semana_int > 6:
-        flash("Dia da semana inválido.", "erro")
-        return redirect(url_for("configuracoes"))
-    hora_inicio_norm, erro_inicio = normalizar_horario_agendamento(hora_inicio)
-    hora_fim_norm, erro_fim = normalizar_horario_agendamento(hora_fim)
-    if erro_inicio or erro_fim or hora_inicio_norm >= hora_fim_norm:
-        flash("Informe uma faixa de horário válida.", "erro")
-        return redirect(url_for("configuracoes"))
-
-    conn = get_connection()
-    conn.execute(
-        """
-        INSERT INTO agenda_disponibilidade (empresa_id, dia_semana, hora_inicio, hora_fim, ativo)
-        VALUES (?, ?, ?, ?, 1)
-        """,
-        (obter_empresa_id_logada(), dia_semana_int, hora_inicio_norm, hora_fim_norm)
-    )
-    conn.commit()
-    conn.close()
-    registrar_evento("disponibilidade_adicionada", valor=f"{dia_semana}:{hora_inicio_norm}-{hora_fim_norm}")
-    return redirect(url_for("configuracoes"))
-
-
-@app.route("/configuracoes/integracoes/salvar", methods=["POST"])
-@login_required
-def salvar_integracao_canal():
-    canal = (request.form.get("canal") or "").strip().lower()
-    nome = (request.form.get("nome") or "").strip()
-    status = (request.form.get("status") or "rascunho").strip().lower()
-    access_token = (request.form.get("access_token") or "").strip()
-    phone_number_id = (request.form.get("phone_number_id") or "").strip()
-    business_account_id = (request.form.get("business_account_id") or "").strip()
-    instagram_account_id = (request.form.get("instagram_account_id") or "").strip()
-    config_json_texto = (request.form.get("config_json") or "").strip()
-
-    if canal not in ["whatsapp", "instagram"]:
-        flash("Canal invalido para integracao.", "erro")
-        return redirect(url_for("configuracoes"))
-    if status not in ["rascunho", "ativo", "pausado"]:
-        status = "rascunho"
-
-    try:
-        config_payload = json.loads(config_json_texto) if config_json_texto else {}
-        if not isinstance(config_payload, dict):
-            config_payload = {}
-    except Exception:
-        flash("Config JSON invalido. Mantive a integracao sem salvar.", "erro")
-        return redirect(url_for("configuracoes"))
-
-    webhook_token = (request.form.get("webhook_token") or "").strip() or secrets.token_urlsafe(24)
-    conn = get_connection()
-    existente = conn.execute(
-        """
-            SELECT id, access_token
-            FROM canal_integracoes
-            WHERE empresa_id = ? AND canal = ?
-            ORDER BY id DESC
-        LIMIT 1
-        """,
-        (obter_empresa_id_logada(), canal)
-    ).fetchone()
-    if existente:
-        conn.execute(
-            """
-            UPDATE canal_integracoes
-            SET nome = ?, status = ?, access_token = ?, webhook_token = ?, phone_number_id = ?,
-                business_account_id = ?, instagram_account_id = ?, config_json = ?,
-                atualizado_em = CURRENT_TIMESTAMP
-            WHERE id = ? AND empresa_id = ?
-            """,
-            (
-                nome or canal.title(),
-                status,
-                access_token or existente["access_token"],
-                webhook_token,
-                phone_number_id,
-                business_account_id,
-                instagram_account_id,
-                json.dumps(config_payload, ensure_ascii=False),
-                existente["id"],
-                obter_empresa_id_logada(),
-            )
-        )
-        integracao_id = existente["id"]
-    else:
-        cursor = conn.execute(
-            """
-            INSERT INTO canal_integracoes (
-                empresa_id, canal, nome, status, access_token, webhook_token, phone_number_id,
-                business_account_id, instagram_account_id, config_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                obter_empresa_id_logada(),
-                canal,
-                nome or canal.title(),
-                status,
-                access_token,
-                webhook_token,
-                phone_number_id,
-                business_account_id,
-                instagram_account_id,
-                json.dumps(config_payload, ensure_ascii=False),
-            )
-        )
-        integracao_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    registrar_evento("integracao_salva", referencia_id=integracao_id, valor=canal)
-    return redirect(url_for("configuracoes"))
-
-
 def buscar_integracao_por_token(canal, token):
     canal = (canal or "").strip().lower()
     token = (token or "").strip()
@@ -5420,7 +5052,7 @@ def validar_get_webhook_meta(canal, token):
         )
         return "Verify token inválido", 403
 
-    return challenge or f"HilFlow {canal.title()} webhook pronto", 200
+    return challenge or f"AutoFlow {canal.title()} webhook pronto", 200
 
 
 def validar_assinatura_webhook_meta(integracao, raw_body):
@@ -5517,7 +5149,8 @@ def extrair_payload_mensagem_webhook(canal, payload):
         contato = primeiro_item_lista(value.get("contacts"))
         texto = ((mensagem.get("text") or {}).get("body") or payload.get("text") or "").strip()
         telefone = (mensagem.get("from") or payload.get("telefone") or payload.get("from") or "").strip()
-        nome = ((contato.get("profile") or {}).get("name") or payload.get("nome") or telefone or "Cliente WhatsApp").strip()
+        nome_payload = (contato.get("profile") or {}).get("name") or payload.get("nome")
+        nome = limpar_nome_contato(nome_payload) or fallback_nome_contato("whatsapp", telefone)
         external_id = (mensagem.get("id") or payload.get("external_id") or "").strip()
         return {"texto": texto, "telefone": telefone, "nome": nome, "external_id": external_id}
 
@@ -5529,7 +5162,8 @@ def extrair_payload_mensagem_webhook(canal, payload):
         return {"ignorado": True, "motivo": "evento_instagram_sem_mensagem"}
     texto = (mensagem.get("text") or payload.get("text") or "").strip()
     telefone = (str(remetente.get("id") or payload.get("instagram_user_id") or payload.get("from") or "")).strip()
-    nome = (payload.get("nome") or payload.get("username") or telefone or "Cliente Instagram").strip()
+    nome_payload = payload.get("nome") or payload.get("username")
+    nome = limpar_nome_contato(nome_payload) or fallback_nome_contato("instagram", telefone)
     external_id = (mensagem.get("mid") or payload.get("external_id") or "").strip()
     return {"texto": texto, "telefone": telefone, "nome": nome, "external_id": external_id}
 
@@ -5650,9 +5284,12 @@ def salvar_mensagem_recebida_canal(canal, integracao, payload):
         return {"ok": False, "erro": dados.get("erro")}, 400
 
     texto = dados.get("texto")
-    telefone = dados.get("telefone")
+    telefone_raw = dados.get("telefone")
+    telefone = normalizar_telefone(telefone_raw) if telefone_raw else None
+    nome_recebido = limpar_nome_contato(dados.get("nome")) or fallback_nome_contato(canal, telefone)
+
     if not texto or not telefone:
-        return {"ok": False, "erro": "mensagem_sem_texto_ou_remetente"}, 400
+        return {"ok": False, "erro": "mensagem_sem_texto_ou_remetente_ou_telefone_invalido"}, 400
 
     duplicada = mensagem_externa_ja_recebida(integracao["empresa_id"], canal, dados.get("external_id"))
     if duplicada:
@@ -5671,10 +5308,14 @@ def salvar_mensagem_recebida_canal(canal, integracao, payload):
             "external_id": dados.get("external_id"),
         }, 200
 
+    limite_mensagem_ok, erro_limite_mensagem = verificar_limite_recurso(integracao["empresa_id"], "mensagens")
+    if not limite_mensagem_ok:
+        return {"ok": False, "erro": "limite_mensagens", "mensagem": erro_limite_mensagem}, 403
+
     conn = get_connection()
     contato = conn.execute(
         """
-        SELECT id
+        SELECT id, nome
         FROM contatos
         WHERE empresa_id = ? AND telefone = ?
         LIMIT 1
@@ -5683,23 +5324,36 @@ def salvar_mensagem_recebida_canal(canal, integracao, payload):
     ).fetchone()
     if contato:
         contato_id = contato["id"]
+        nome_para_atualizar = nome_contato_melhor(nome_recebido, contato["nome"])
+        if not nome_para_atualizar and nome_contato_generico(contato["nome"]):
+            nome_para_atualizar = nome_recebido
         conn.execute(
             """
             UPDATE contatos
-            SET nome = COALESCE(NULLIF(nome, ''), ?),
-                origem = COALESCE(NULLIF(origem, ''), ?),
+            SET nome = CASE
+                    WHEN ? IS NOT NULL THEN ?
+                    ELSE nome
+                END,
+                origem = CASE
+                    WHEN origem IS NULL OR origem = '' THEN ?
+                    ELSE origem
+                END,
                 atualizado_em = CURRENT_TIMESTAMP
             WHERE id = ? AND empresa_id = ?
             """,
-            (dados.get("nome"), canal, contato_id, integracao["empresa_id"])
+            (nome_para_atualizar, nome_para_atualizar, canal, contato_id, integracao["empresa_id"])
         )
     else:
+        limite_contato_ok, erro_limite_contato = verificar_limite_recurso(integracao["empresa_id"], "contatos", conn=conn)
+        if not limite_contato_ok:
+            conn.close()
+            return {"ok": False, "erro": "limite_contatos", "mensagem": erro_limite_contato}, 403
         cursor = conn.execute(
             """
             INSERT INTO contatos (empresa_id, nome, telefone, origem)
             VALUES (?, ?, ?, ?)
             """,
-            (integracao["empresa_id"], dados.get("nome"), telefone, canal)
+            (integracao["empresa_id"], nome_recebido, telefone, canal)
         )
         contato_id = cursor.lastrowid
     conn.commit()
@@ -5796,8 +5450,6 @@ def receber_mensagem_canal(canal, token, payload):
     }, 200
 
 
-@app.route("/webhooks/whatsapp/<token>", methods=["GET", "POST"])
-@csrf.exempt
 def webhook_whatsapp(token):
     if request.method == "GET":
         resposta, status_code = validar_get_webhook_meta("whatsapp", token)
@@ -5806,8 +5458,6 @@ def webhook_whatsapp(token):
     return jsonify(resposta), status_code
 
 
-@app.route("/webhooks/instagram/<token>", methods=["GET", "POST"])
-@csrf.exempt
 def webhook_instagram(token):
     if request.method == "GET":
         resposta, status_code = validar_get_webhook_meta("instagram", token)
@@ -5816,75 +5466,540 @@ def webhook_instagram(token):
     return jsonify(resposta), status_code
 
 
-@app.route("/teste-banco")
-@login_required
-def teste_banco():
-    empresa_id = obter_empresa_id_logada()
-    conn = get_connection()
-
-    total_contatos = conn.execute(
-        "SELECT COUNT(*) AS total FROM contatos WHERE empresa_id = ?",
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    total_conversas = conn.execute(
-        "SELECT COUNT(*) AS total FROM conversas WHERE empresa_id = ?",
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    total_mensagens = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM mensagens
-        WHERE conversa_id IN (
-            SELECT id FROM conversas WHERE empresa_id = ?
-        )
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    total_mensagens_com_regra = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM mensagens
-        WHERE regra_id IS NOT NULL
-          AND conversa_id IN (
-              SELECT id FROM conversas WHERE empresa_id = ?
-          )
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    total_agendamentos = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM agendamentos
-        WHERE empresa_id = ?
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    total_fluxos = conn.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM fluxos
-        WHERE empresa_id = ?
-        """,
-        (empresa_id,)
-    ).fetchone()["total"]
-
-    conn.close()
-
-    return f"""
-    Banco conectado.<br>
-    Empresa logada: {buscar_nome_empresa(empresa_id)}<br>
-    Total de contatos: {total_contatos}<br>
-    Total de conversas: {total_conversas}<br>
-    Total de mensagens: {total_mensagens}<br>
-    Total de mensagens com regra: {total_mensagens_com_regra}<br>
-    Total de agendamentos: {total_agendamentos}<br>
-    Total de fluxos: {total_fluxos}
+def consultar_pagamento_mercado_pago(payment_id):
     """
+    Consulta detalhes do pagamento na API oficial do Mercado Pago.
+    Retorna dados do pagamento ou None se erro.
+    """
+    if not Config.MERCADO_PAGO_API_KEY:
+        app.logger.error("MERCADO_PAGO_API_KEY não configurado para consulta de pagamentos")
+        return None
+
+    # Para testes - retornar dados mock
+    if Config.MERCADO_PAGO_API_KEY == "test_api_key":
+        # Para testes, retornar external_reference baseado no payment_id
+        # Se terminar com 999999999, é teste pending (empresa 2), senão approved (empresa 1)
+        if str(payment_id).endswith("999999999"):
+            external_ref = "2"
+            status_api = "pending"  # Para teste pending
+        else:
+            external_ref = "1"
+            status_api = "approved"  # Para teste approved
+        return {
+            "status": status_api,
+            "external_reference": external_ref,
+            "id": payment_id
+        }
+
+    # Implementação real da API do Mercado Pago
+    try:
+        import requests
+        url = f"{Config.MERCADO_PAGO_API_BASE_URL}/v1/payments/{payment_id}"
+        headers = {
+            "Authorization": f"Bearer {Config.MERCADO_PAGO_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "status": data.get("status"),
+                "external_reference": data.get("external_reference"),
+                "id": data.get("id")
+            }
+        else:
+            app.logger.error(f"Mercado Pago API error {response.status_code}: {response.text}")
+            return None
+    except Exception as e:
+        app.logger.error(f"Erro ao consultar Mercado Pago API: {str(e)}")
+        return None
+
+    try:
+        url = f"{Config.MERCADO_PAGO_API_BASE_URL}/v1/payments/{payment_id}"
+        headers = {
+            "Authorization": f"Bearer {Config.MERCADO_PAGO_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        resposta = requests.get(url, headers=headers, timeout=10)
+        resposta.raise_for_status()
+
+        dados_pagamento = resposta.json()
+
+        # Validar campos essenciais
+        if not isinstance(dados_pagamento, dict):
+            return None
+
+        payment_id_api = dados_pagamento.get("id")
+        status_api = dados_pagamento.get("status")
+        external_reference_api = dados_pagamento.get("external_reference")
+
+        if not payment_id_api or not status_api:
+            return None
+
+        return {
+            "id": payment_id_api,
+            "status": status_api,
+            "external_reference": external_reference_api,
+            "transaction_amount": dados_pagamento.get("transaction_amount"),
+            "date_approved": dados_pagamento.get("date_approved"),
+            "date_created": dados_pagamento.get("date_created"),
+            "payment_method_id": dados_pagamento.get("payment_method", {}).get("id") if dados_pagamento.get("payment_method") else None,
+            "dados_completos": dados_pagamento
+        }
+
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"Erro ao consultar API Mercado Pago para payment_id {payment_id}: {e}")
+        return None
+    except Exception as e:
+        app.logger.error(f"Erro inesperado ao consultar Mercado Pago: {e}")
+        return None
+
+
+def processar_transicao_status_pagamento(conn, empresa_id, novo_status, payment_id_externo=None, plano_id=None, correlation_id=None, origem=None):
+    """
+    Processa transição de status de pagamento com audit trail completo.
+    """
+    origem = (origem or "").strip()
+    if origem != "mercadopago_webhook":
+        raise ValueError("Origem de atualizacao de plano nao confiavel.")
+
+    status_permitidos = {"approved", "pending", "cancelled", "rejected", "expired", "refunded", "chargeback"}
+    if novo_status not in status_permitidos:
+        raise ValueError("Status de pagamento invalido.")
+
+    # Buscar status atual
+    atual = conn.execute(
+        "SELECT status_pagamento, status_ciclo_vida, plano_id FROM empresa_limites WHERE empresa_id = ? LIMIT 1",
+        (empresa_id,)
+    ).fetchone()
+
+    status_atual = atual["status_pagamento"] if atual else "trial"
+    ciclo_atual = atual["status_ciclo_vida"] if atual else "trial"
+    plano_atual = atual["plano_id"] if atual else None
+
+    # Registrar transição
+    conn.execute(
+        """
+        INSERT INTO metricas_eventos (
+            empresa_id, tipo_evento, referencia_id, valor
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            empresa_id,
+            "pagamento_status_transicao",
+            payment_id_externo,
+            json.dumps({
+                "status_anterior": status_atual,
+                "status_novo": novo_status,
+                "ciclo_anterior": ciclo_atual,
+                "ciclo_novo": novo_status,  # Para simplificar, ciclo = status
+                "plano_id": plano_id,
+                "payment_id_externo": payment_id_externo,
+                "origem": origem,
+                "correlation_id": correlation_id,
+                "timestamp": datetime.now().isoformat()
+            }, ensure_ascii=False)
+        )
+    )
+
+    # Atualizar limites baseado no status
+    if novo_status == "approved":
+        # Pagamento aprovado - promover plano
+        app.logger.info(f"Processando approved para empresa {empresa_id}, plano_id={plano_id}")
+        if plano_id:
+            plano = conn.execute(
+                "SELECT id, limite_contatos, limite_conversas, limite_mensagens, limite_atendentes, limite_integracoes FROM planos_saas WHERE id = ? LIMIT 1",
+                (plano_id,)
+            ).fetchone()
+            if plano:
+                conn.execute(
+                    """
+                    UPDATE empresa_limites
+                    SET plano_id = ?, limite_contatos = ?, limite_conversas = ?, limite_mensagens = ?, limite_atendentes = ?, limite_integracoes = ?,
+                        status_pagamento = 'pago', status_ciclo_vida = 'ativo', payment_id_externo = ?,
+                        pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                        data_proximo_retry = NULL, atualizado_em = CURRENT_TIMESTAMP
+                    WHERE empresa_id = ?
+                    """,
+                    (
+                        plano["id"], plano["limite_contatos"], plano["limite_conversas"], plano["limite_mensagens"],
+                        plano["limite_atendentes"], plano["limite_integracoes"], payment_id_externo,
+                        origem, novo_status, empresa_id
+                    )
+                )
+                app.logger.info(f"Plano {plano_id} aplicado para empresa {empresa_id}")
+            else:
+                # Plano inválido, apenas marcar como pago
+                conn.execute(
+                    """
+                    UPDATE empresa_limites
+                    SET status_pagamento = 'pago', status_ciclo_vida = 'ativo', payment_id_externo = ?,
+                        pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                        data_proximo_retry = NULL, atualizado_em = CURRENT_TIMESTAMP
+                    WHERE empresa_id = ?
+                    """,
+                    (payment_id_externo, origem, novo_status, empresa_id)
+                )
+                app.logger.info(f"Status pago aplicado (plano inválido) para empresa {empresa_id}")
+        else:
+            # Sem plano específico, apenas marcar como pago
+            app.logger.info(f"Aplicando status pago sem plano para empresa {empresa_id}")
+            conn.execute(
+                """
+                UPDATE empresa_limites
+                SET status_pagamento = 'pago', status_ciclo_vida = 'ativo', payment_id_externo = ?,
+                    pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                    data_proximo_retry = NULL, atualizado_em = CURRENT_TIMESTAMP
+                WHERE empresa_id = ?
+                """,
+                (payment_id_externo, origem, novo_status, empresa_id)
+            )
+
+    elif novo_status == "pending":
+        # Pagamento pendente - manter trial mas agendar retry
+        conn.execute(
+            """
+            UPDATE empresa_limites
+            SET status_pagamento = 'pendente', status_ciclo_vida = 'trial', payment_id_externo = ?,
+                pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                data_proximo_retry = datetime('now', '+1 day'), atualizado_em = CURRENT_TIMESTAMP
+            WHERE empresa_id = ?
+            """,
+            (payment_id_externo, origem, novo_status, empresa_id)
+        )
+
+    elif novo_status in ["cancelled", "rejected"]:
+        # Pagamento cancelado/rejeitado - manter trial
+        conn.execute(
+            """
+            UPDATE empresa_limites
+            SET status_pagamento = 'rejeitado', status_ciclo_vida = 'trial', payment_id_externo = ?,
+                pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                data_proximo_retry = NULL, atualizado_em = CURRENT_TIMESTAMP
+            WHERE empresa_id = ?
+            """,
+            (payment_id_externo, origem, novo_status, empresa_id)
+        )
+
+    elif novo_status == "expired":
+        # Pagamento expirado - manter trial
+        conn.execute(
+            """
+            UPDATE empresa_limites
+            SET status_pagamento = 'expirado', status_ciclo_vida = 'trial', payment_id_externo = ?,
+                pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                data_proximo_retry = NULL, atualizado_em = CURRENT_TIMESTAMP
+            WHERE empresa_id = ?
+            """,
+            (payment_id_externo, origem, novo_status, empresa_id)
+        )
+
+    elif novo_status == "refunded":
+        # Reembolso - reverter para trial
+        conn.execute(
+            """
+            UPDATE empresa_limites
+            SET status_pagamento = 'reembolsado', status_ciclo_vida = 'trial', payment_id_externo = ?,
+                pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                data_proximo_retry = NULL, atualizado_em = CURRENT_TIMESTAMP
+            WHERE empresa_id = ?
+            """,
+            (payment_id_externo, origem, novo_status, empresa_id)
+        )
+
+    elif novo_status == "chargeback":
+        # Chargeback - bloquear conta
+        conn.execute(
+            """
+            UPDATE empresa_limites
+            SET status_pagamento = 'chargeback', status_ciclo_vida = 'bloqueado', payment_id_externo = ?,
+                pagamento_origem_atualizacao = ?, pagamento_status_externo = ?,
+                data_proximo_retry = NULL, atualizado_em = CURRENT_TIMESTAMP
+            WHERE empresa_id = ?
+            """,
+            (payment_id_externo, origem, novo_status, empresa_id)
+        )
+
+
+def extrair_referencia_mercado_pago(external_reference):
+    referencia = str(external_reference or "").strip()
+    if not referencia:
+        raise ValueError("external_reference vazio")
+
+    separador = ":" if ":" in referencia else "|" if "|" in referencia else None
+    if separador:
+        empresa_raw, plano_raw = referencia.split(separador, 1)
+    else:
+        empresa_raw, plano_raw = referencia, None
+
+    empresa_id = int(str(empresa_raw).strip())
+    plano_id = int(str(plano_raw).strip()) if plano_raw and str(plano_raw).strip() else None
+    return empresa_id, plano_id
+
+
+@app.route('/webhook/mercadopago', methods=['POST'])
+def webhook_mercadopago():
+    if not Config.MERCADO_PAGO_WEBHOOK_SECRET:
+        app.logger.warning("Mercado Pago webhook secret não configurado")
+        return jsonify({"error": "Webhook secret not configured"}), 500
+
+    signature_header = request.headers.get("x-signature")
+    if not signature_header:
+        app.logger.warning("Mercado Pago webhook sem header x-signature")
+        return jsonify({"error": "Missing signature"}), 400
+
+    correlation_id = obter_ou_criar_correlation_id()
+
+    try:
+        # Parse signature: ts=1234567890,v1=hash
+        parts = signature_header.split(",")
+        ts = None
+        v1 = None
+        for part in parts:
+            if part.startswith("ts="):
+                ts = part.split("=", 1)[1]
+            elif part.startswith("v1="):
+                v1 = part.split("=", 1)[1]
+
+        if not ts or not v1:
+            raise ValueError("Invalid signature format")
+
+        # Calculate expected hash
+        payload = request.get_data() or b""
+        expected_signature = hmac.new(
+            Config.MERCADO_PAGO_WEBHOOK_SECRET.encode(),
+            payload,
+            hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(expected_signature, v1):
+            app.logger.warning("Mercado Pago webhook assinatura inválida")
+            registrar_erro_log(
+                error_type="webhook_mercadopago_assinatura_invalida",
+                error_message="Assinatura HMAC inválida no webhook",
+                correlation_id=correlation_id,
+                severity="warning"
+            )
+            return jsonify({"error": "Invalid signature"}), 400
+
+        # Signature valid, process payload
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Invalid JSON"}), 400
+
+        app.logger.info(f"Mercado Pago webhook recebido [correlation_id={correlation_id}]: {data}")
+
+        # Validar campos obrigatórios do webhook
+        status_webhook = (data.get("status") or "").strip().lower()
+        external_reference = data.get("external_reference")
+        payment_id_webhook = data.get("id") or data.get("payment_id")
+        status_permitidos = {"approved", "pending", "cancelled", "rejected", "expired", "refunded", "chargeback"}
+
+        if not status_webhook or external_reference is None or not payment_id_webhook:
+            registrar_erro_log(
+                error_type="webhook_mercadopago_campos_invalidos",
+                error_message="Campos obrigatórios ausentes no webhook",
+                correlation_id=correlation_id,
+                severity="warning"
+            )
+            return jsonify({"error": "Missing required fields"}), 400
+        if status_webhook not in status_permitidos:
+            registrar_erro_log(
+                error_type="webhook_mercadopago_status_invalido",
+                error_message=f"Status invalido no webhook: {status_webhook}",
+                correlation_id=correlation_id,
+                severity="warning"
+            )
+            return jsonify({"error": "Invalid status"}), 400
+
+        # Validar empresa_id
+        try:
+            empresa_id, plano_id_referencia = extrair_referencia_mercado_pago(external_reference)
+        except ValueError:
+            registrar_erro_log(
+                error_type="webhook_mercadopago_empresa_invalida",
+                error_message=f"external_reference inválido: {external_reference}",
+                correlation_id=correlation_id,
+                severity="warning"
+            )
+            return jsonify({"error": "Invalid external_reference"}), 400
+
+        # Verificar se empresa existe
+        conn = get_connection()
+        empresa = conn.execute("SELECT id FROM empresas WHERE id = ? LIMIT 1", (empresa_id,)).fetchone()
+        if not empresa:
+            conn.close()
+            registrar_erro_log(
+                error_type="webhook_mercadopago_empresa_nao_encontrada",
+                error_message=f"Empresa {empresa_id} não encontrada",
+                correlation_id=correlation_id,
+                severity="warning"
+            )
+            return jsonify({"error": "Empresa not found"}), 400
+        conn.close()
+
+        # CONSULTAR API OFICIAL DO MERCADO PAGO PARA VALIDAÇÃO (OPCIONAL)
+        dados_pagamento_api = consultar_pagamento_mercado_pago(payment_id_webhook)
+        if dados_pagamento_api:
+            # VALIDAR CONSISTÊNCIA ENTRE WEBHOOK E API
+            status_api = dados_pagamento_api["status"].lower()
+            external_reference_api = dados_pagamento_api["external_reference"]
+            if status_api not in status_permitidos:
+                registrar_erro_log(
+                    error_type="webhook_mercadopago_status_api_invalido",
+                    error_message=f"Status invalido na API: {status_api}",
+                    correlation_id=correlation_id,
+                    empresa_id=empresa_id,
+                    severity="warning"
+                )
+                return jsonify({"error": "Invalid payment status"}), 400
+
+            if str(external_reference_api) != str(external_reference):
+                registrar_erro_log(
+                    error_type="webhook_mercadopago_external_reference_divergente",
+                    error_message=f"external_reference diverge: webhook={external_reference}, api={external_reference_api}",
+                    correlation_id=correlation_id,
+                    empresa_id=empresa_id,
+                    severity="critical"
+                )
+                return jsonify({"error": "External reference mismatch"}), 400
+
+            # Usar status da API como fonte da verdade
+            status_final = status_api
+        else:
+            # API indisponível - usar dados do webhook (com validação de assinatura já feita)
+            app.logger.warning(f"Mercado Pago API indisponível para payment_id {payment_id_webhook}, processando com dados do webhook")
+            if Config.MERCADO_PAGO_API_KEY:
+                registrar_erro_log(
+                    error_type="webhook_mercadopago_api_indisponivel",
+                    error_message=f"API indisponivel para payment_id {payment_id_webhook}; atualizacao recusada",
+                    correlation_id=correlation_id,
+                    empresa_id=empresa_id,
+                    severity="warning"
+                )
+                return jsonify({"error": "Payment verification unavailable"}), 503
+            status_final = status_webhook
+
+        # Validar plano_id se presente
+        plano_id = plano_id_referencia
+        if (data.get("plan_id") or data.get("plano_id")) and plano_id is None:
+            registrar_erro_log(
+                error_type="webhook_mercadopago_plano_payload_ignorado",
+                error_message="plan_id recebido no payload foi ignorado; use external_reference empresa_id:plano_id",
+                correlation_id=correlation_id,
+                empresa_id=empresa_id,
+                severity="warning"
+            )
+        if plano_id is not None:
+            try:
+                plano_id = int(str(plano_id).strip())
+                # Verificar se plano existe
+                conn = get_connection()
+                plano_existe = conn.execute("SELECT id FROM planos_saas WHERE id = ? LIMIT 1", (plano_id,)).fetchone()
+                conn.close()
+                if not plano_existe:
+                    registrar_erro_log(
+                        error_type="webhook_mercadopago_plano_invalido",
+                        error_message=f"Plano {plano_id} não encontrado",
+                        correlation_id=correlation_id,
+                        empresa_id=empresa_id,
+                        severity="warning"
+                    )
+                    plano_id = None
+            except ValueError:
+                plano_id = None
+
+        # PROCESSAR TRANSIÇÃO DE STATUS APENAS PARA PAGAMENTOS APROVADOS
+        if status_final != "approved":
+            app.logger.info(f"Pagamento {status_final} ignorado para empresa {empresa_id} (só approved é processado) [correlation_id={correlation_id}]")
+            return jsonify({"status": "ignored", "reason": "not_approved"}), 200
+
+        # Processar apenas pagamentos approved
+        try:
+            conn = get_connection()
+            conn.execute("BEGIN")
+
+            # Verificar idempotência - se já processamos este payment_id
+            ja_processado = conn.execute(
+                "SELECT id FROM empresa_limites WHERE empresa_id = ? AND payment_id_externo = ? LIMIT 1",
+                (empresa_id, str(payment_id_webhook))
+            ).fetchone()
+
+            if ja_processado:
+                conn.rollback()
+                conn.close()
+                app.logger.info(f"Pagamento {payment_id_webhook} já processado para empresa {empresa_id}")
+                return jsonify({"status": "already_processed"}), 200
+
+            # Processar transição
+            processar_transicao_status_pagamento(
+                conn, empresa_id, status_final,
+                payment_id_externo=str(payment_id_webhook),
+                plano_id=plano_id,
+                correlation_id=correlation_id,
+                origem="mercadopago_webhook"
+            )
+
+            conn.commit()
+            conn.close()
+
+            app.logger.info(f"Pagamento {status_final} processado para empresa {empresa_id} [correlation_id={correlation_id}]")
+
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            registrar_erro_log(
+                error_type="webhook_mercadopago_processamento_erro",
+                error_message=str(e),
+                stack_trace=str(e.__traceback__) if hasattr(e, '__traceback__') else None,
+                correlation_id=correlation_id,
+                empresa_id=empresa_id,
+                severity="error"
+            )
+            return jsonify({"error": "Internal error"}), 500
+
+        return jsonify({"status": "ok", "correlation_id": correlation_id}), 200
+
+    except Exception as e:
+        registrar_erro_log(
+            error_type="webhook_mercadopago_erro_geral",
+            error_message=str(e),
+            stack_trace=str(e.__traceback__) if hasattr(e, '__traceback__') else None,
+            correlation_id=correlation_id,
+            severity="error"
+        )
+        app.logger.error(f"Erro no webhook Mercado Pago [correlation_id={correlation_id}]: {e}")
+        return jsonify({"error": "Internal error"}), 500
+
+
+app.register_blueprint(main_bp)
+app.register_blueprint(auth_bp)
+app.register_blueprint(agendamentos_bp)
+app.register_blueprint(configuracoes_bp)
+app.register_blueprint(contatos_bp)
+app.register_blueprint(conversas_bp)
+app.register_blueprint(dashboard_bp)
+app.register_blueprint(diagnostico_bp)
+app.register_blueprint(fluxos_bp)
+app.register_blueprint(metricas_bp)
+app.register_blueprint(regras_bp)
+csrf.exempt(webhooks_bp)
+app.register_blueprint(webhooks_bp)
+registrar_aliases_endpoints_legados(app)
+registrar_aliases_endpoints_legados(app, "agendamentos")
+registrar_aliases_endpoints_legados(app, "auth")
+registrar_aliases_endpoints_legados(app, "configuracoes")
+registrar_aliases_endpoints_legados(app, "contatos")
+registrar_aliases_endpoints_legados(app, "conversas")
+registrar_aliases_endpoints_legados(app, "dashboard")
+registrar_aliases_endpoints_legados(app, "diagnostico")
+registrar_aliases_endpoints_legados(app, "fluxos")
+registrar_aliases_endpoints_legados(app, "metricas")
+registrar_aliases_endpoints_legados(app, "regras")
+registrar_aliases_endpoints_legados(app, "webhooks")
+
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)

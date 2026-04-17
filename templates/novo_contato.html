@@ -8,13 +8,14 @@
     <div class="contact-create-header">
         <div>
             <h2>Novo Contato</h2>
-            <p>Cadastre um novo lead ou cliente no HilFlow Connect</p>
+            <p>Cadastre um novo lead ou cliente no AutoFlow</p>
         </div>
     </div>
 
     <div class="contact-create-grid">
 
         <form method="POST" class="form-card contact-form-card">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <div class="form-card-top">
                 <h3>Dados do contato</h3>
                 <p>Preencha as informações para adicionar um novo atendimento ao sistema.</p>
@@ -66,7 +67,7 @@
             </div>
 
             <div class="details-card">
-                <h3>HilFlow Connect</h3>
+                <h3>AutoFlow</h3>
                 <p>Seu CRM e central de atendimento inteligente, com visual profissional e automação pronta para crescer.</p>
             </div>
         </div>

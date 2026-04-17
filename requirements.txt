@@ -9,3 +9,4 @@ redis==5.0.1
 elasticsearch==8.11.0
 Flask-Caching==2.1.0
 twilio==8.11.0
+gunicorn==21.2.0

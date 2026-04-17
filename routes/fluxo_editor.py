@@ -1,9 +1,20 @@
+# =========================================================
+# ⚠️ ARQUIVO LEGADO - NÃO UTILIZAR
+# =========================================================
+# Editor antigo incompatível com schema atual
+# (usa tipo, opcoes_json, etc).
+# =========================================================
+
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from utils.db import get_connection
 from utils.auth import login_required, obter_empresa_id_logada
 import json
 
 fluxo_editor_bp = Blueprint('fluxo_editor', __name__)
+
+@fluxo_editor_bp.before_request
+def bloquear_fluxo_editor_legado():
+    return "Fluxo editor legado desativado", 410
 
 @fluxo_editor_bp.route("/fluxos/<int:fluxo_id>/editor")
 @login_required

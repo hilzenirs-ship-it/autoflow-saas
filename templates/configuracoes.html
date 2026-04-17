@@ -19,18 +19,19 @@
             <h3>Informações da empresa</h3>
 
             <label>Nome da empresa</label>
-            <input type="text" value="HilFlow Connect">
+            <input type="text" value="AutoFlow">
 
             <label>Nome exibido no atendimento</label>
-            <input type="text" value="HilFlow Connect">
+            <input type="text" value="AutoFlow">
 
             <label>E-mail</label>
-            <input type="email" value="contato@hilflow.com">
+            <input type="email" value="contato@autoflow.com">
 
             {% if empresas_usuario %}
                 <hr style="margin: 14px 0; border: none; border-top: 1px solid #eee;">
                 <h4>Trocar contexto de empresa</h4>
                 <form method="POST" action="{{ url_for('trocar_empresa') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <label>Empresa ativa</label>
                     <select name="empresa_id">
                         {% for empresa in empresas_usuario %}
@@ -59,6 +60,7 @@
             <hr style="margin: 14px 0; border: none; border-top: 1px solid #eee;">
             <h4>Disponibilidade avançada (agendamento)</h4>
             <form method="POST" action="{{ url_for('adicionar_disponibilidade') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <label>Dia da semana</label>
                 <select name="dia_semana">
                     <option value="0">Segunda</option>
@@ -120,6 +122,7 @@
             <hr style="margin: 14px 0; border: none; border-top: 1px solid #eee;">
             <h4>Gestão de membros da empresa</h4>
             <form method="POST" action="{{ url_for('adicionar_membro_empresa') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <label>E-mail do usuário</label>
                 <input type="email" name="email" placeholder="usuario@email.com" required>
                 <label>Papel</label>
@@ -144,6 +147,7 @@
         <div class="settings-card">
             <h3>Integrações de canais</h3>
             <form method="POST" action="{{ url_for('salvar_integracao_canal') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <label>Canal</label>
                 <select name="canal">
                     <option value="whatsapp">WhatsApp</option>
@@ -196,22 +200,33 @@
             {% if plano_empresa %}
                 <p><strong>Plano:</strong> {{ plano_empresa.plano_nome or 'Starter' }}</p>
                 <p><strong>Status:</strong> {{ plano_empresa.status or 'ativo' }}</p>
+                {% if status_limites and status_limites.avisos %}
+                    <div class="flash-stack" style="margin: 10px 0;">
+                        {% for aviso in status_limites.avisos %}
+                            <div class="flash-message erro">{{ aviso }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
                 <div class="saas-limit-grid">
                     <div>
-                        <small>Conversas</small>
-                        <strong>{{ plano_empresa.limite_conversas or 'Ilimitado' }}</strong>
+                        <small>Contatos</small>
+                        {% set limite_contatos = status_limites.recursos.contatos if status_limites else none %}
+                        <strong>{{ limite_contatos.usado if limite_contatos else 0 }} / {{ limite_contatos.limite if limite_contatos and limite_contatos.limite is not none else 'Ilimitado' }}</strong>
                     </div>
                     <div>
                         <small>Mensagens</small>
-                        <strong>{{ plano_empresa.limite_mensagens or 'Ilimitado' }}</strong>
+                        {% set limite_mensagens = status_limites.recursos.mensagens if status_limites else none %}
+                        <strong>{{ limite_mensagens.usado if limite_mensagens else 0 }} / {{ limite_mensagens.limite if limite_mensagens and limite_mensagens.limite is not none else 'Ilimitado' }}</strong>
                     </div>
                     <div>
                         <small>Atendentes</small>
-                        <strong>{{ plano_empresa.limite_atendentes or 'Ilimitado' }}</strong>
+                        {% set limite_atendentes = status_limites.recursos.atendentes if status_limites else none %}
+                        <strong>{{ limite_atendentes.usado if limite_atendentes else 0 }} / {{ limite_atendentes.limite if limite_atendentes and limite_atendentes.limite is not none else 'Ilimitado' }}</strong>
                     </div>
                     <div>
                         <small>Integrações</small>
-                        <strong>{{ plano_empresa.limite_integracoes or 'Ilimitado' }}</strong>
+                        {% set limite_integracoes = status_limites.recursos.integracoes if status_limites else none %}
+                        <strong>{{ limite_integracoes.usado if limite_integracoes else 0 }} / {{ limite_integracoes.limite if limite_integracoes and limite_integracoes.limite is not none else 'Ilimitado' }}</strong>
                     </div>
                 </div>
             {% else %}

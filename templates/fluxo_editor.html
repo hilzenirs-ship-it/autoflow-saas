@@ -19,6 +19,7 @@
     </div>
 
     <form method="POST" action="{{ url_for('editar_fluxo', fluxo_id=fluxo.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <div class="editor-config" style="margin-bottom: 18px;">
             <h3>Dados do fluxo</h3>
 
@@ -63,6 +64,7 @@
 
             <div class="editor-block-list">
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="mensagem">
                     <input type="hidden" name="titulo" value="Mensagem">
                     <input type="hidden" name="conteudo" value="Nova mensagem do fluxo">
@@ -70,6 +72,7 @@
                 </form>
 
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="pergunta">
                     <input type="hidden" name="titulo" value="Pergunta">
                     <input type="hidden" name="conteudo" value="Digite sua pergunta aqui">
@@ -77,6 +80,7 @@
                 </form>
 
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="multipla_escolha">
                     <input type="hidden" name="titulo" value="Múltipla escolha">
                     <input type="hidden" name="conteudo" value="1 - Opção 1&#10;2 - Opção 2">
@@ -84,6 +88,7 @@
                 </form>
 
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="coletar_nome">
                     <input type="hidden" name="titulo" value="Coletar nome">
                     <input type="hidden" name="conteudo" value="Qual é o seu nome?">
@@ -91,6 +96,7 @@
                 </form>
 
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="coletar_telefone">
                     <input type="hidden" name="titulo" value="Coletar telefone">
                     <input type="hidden" name="conteudo" value="Qual é o seu telefone?">
@@ -98,6 +104,7 @@
                 </form>
 
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="acao">
                     <input type="hidden" name="titulo" value="Ação">
                     <input type="hidden" name="conteudo" value="Executar ação">
@@ -105,6 +112,7 @@
                 </form>
 
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="transferir_humano">
                     <input type="hidden" name="titulo" value="Transferir para humano">
                     <input type="hidden" name="conteudo" value="Vou transferir você para um atendente.">
@@ -112,6 +120,7 @@
                 </form>
 
                 <form method="POST" action="{{ url_for('novo_bloco_fluxo', fluxo_id=fluxo.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                     <input type="hidden" name="tipo_bloco" value="encerrar">
                     <input type="hidden" name="titulo" value="Encerrar atendimento">
                     <input type="hidden" name="conteudo" value="Atendimento encerrado 💜">
@@ -142,6 +151,7 @@
                         <button type="button" class="flow-action" onclick="selecionarBloco({{ bloco.id }})">Editar</button>
 
                         <form method="POST" action="{{ url_for('excluir_bloco_fluxo', fluxo_id=fluxo.id, bloco_id=bloco.id) }}" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit"
                                class="flow-action danger"
                                onclick="return confirm('Deseja excluir este bloco?');">

@@ -11,6 +11,7 @@
     </div>
 
     <form method="POST" class="form-card">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
 
         <label>Nome</label>
         <input type="text" name="nome" value="{{ contato['nome'] }}" required>

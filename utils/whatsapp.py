@@ -1,3 +1,11 @@
+# =========================================================
+# ⚠️ LEGADO / CAMINHO ANTIGO
+# =========================================================
+# Este módulo está ligado ao webhook antigo (Twilio/API).
+# Não faz parte do fluxo principal atual (Meta/Webhooks).
+# Pode não respeitar multiempresa corretamente.
+# =========================================================
+
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from config import Config
@@ -44,8 +52,8 @@ def processar_mensagem_whatsapp(from_number, body):
         empresa = conn.execute("SELECT id FROM empresas LIMIT 1").fetchone()
         if empresa:
             conn.execute(
-                "INSERT INTO contatos (empresa_id, telefone, origem) VALUES (?, ?, 'whatsapp')",
-                (empresa["id"], telefone)
+                "INSERT INTO contatos (empresa_id, telefone, origem, nome) VALUES (?, ?, 'whatsapp', ?)",
+                (empresa["id"], telefone, "Contato sem nome")
             )
             contato_id = conn.lastrowid
             empresa_id = empresa["id"]

@@ -1,3 +1,11 @@
+# =========================================================
+# ⚠️ LEGADO PARCIAL
+# =========================================================
+# Este serviço usa campos antigos como 'etapa_atual'.
+# NÃO é utilizado pelo fluxo principal atual.
+# Manter apenas por compatibilidade.
+# =========================================================
+
 import json
 import unicodedata
 from typing import List, Dict, Tuple, Optional, Any

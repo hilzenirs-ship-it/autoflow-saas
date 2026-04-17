@@ -235,6 +235,7 @@ CREATE TABLE IF NOT EXISTS planos_saas (
     nome TEXT NOT NULL UNIQUE,
     descricao TEXT,
     preco_mensal REAL DEFAULT 0,
+    limite_contatos INTEGER,
     limite_conversas INTEGER,
     limite_mensagens INTEGER,
     limite_atendentes INTEGER,
@@ -247,14 +248,35 @@ CREATE TABLE IF NOT EXISTS empresa_limites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     empresa_id INTEGER NOT NULL UNIQUE,
     plano_id INTEGER,
+    limite_contatos INTEGER,
     limite_conversas INTEGER,
     limite_mensagens INTEGER,
     limite_atendentes INTEGER,
     limite_integracoes INTEGER,
-    status TEXT DEFAULT 'ativo',
+    status_pagamento TEXT DEFAULT 'trial',
+    status_ciclo_vida TEXT DEFAULT 'trial',
+    payment_id_externo TEXT,
+    pagamento_origem_atualizacao TEXT,
+    pagamento_status_externo TEXT,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
     FOREIGN KEY (plano_id) REFERENCES planos_saas(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS login_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    empresa_id INTEGER,
+    email_tentado TEXT,
+    ip TEXT,
+    user_agent TEXT,
+    status TEXT DEFAULT 'sucesso',
+    motivo TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (empresa_id) REFERENCES empresas(id)
 );
 
 -- =========================
@@ -279,6 +301,9 @@ CREATE INDEX IF NOT EXISTS idx_agendamentos_empresa_id ON agendamentos(empresa_i
 CREATE INDEX IF NOT EXISTS idx_agendamentos_contato_id ON agendamentos(contato_id);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_conversa_id ON agendamentos(conversa_id);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agendamentos_slot_ativo
+ON agendamentos (empresa_id, data, horario)
+WHERE status != 'cancelado';
 
 -- =========================
 -- TAGS
@@ -322,3 +347,30 @@ CREATE TABLE IF NOT EXISTS metricas_eventos (
 
 CREATE INDEX IF NOT EXISTS idx_metricas_eventos_empresa_id ON metricas_eventos(empresa_id);
 CREATE INDEX IF NOT EXISTS idx_metricas_eventos_tipo_evento ON metricas_eventos(tipo_evento);
+
+-- =========================
+-- LOGS DE ERRO PARA AUDITORIA
+-- =========================
+CREATE TABLE IF NOT EXISTS error_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    correlation_id TEXT,
+    empresa_id INTEGER,
+    user_id INTEGER,
+    endpoint TEXT,
+    method TEXT,
+    error_type TEXT,
+    error_message TEXT,
+    stack_trace TEXT,
+    request_data TEXT,
+    user_agent TEXT,
+    ip_address TEXT,
+    severity TEXT DEFAULT 'error',
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE SET NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_error_logs_correlation_id ON error_logs(correlation_id);
+CREATE INDEX IF NOT EXISTS idx_error_logs_empresa_id ON error_logs(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_error_logs_criado_em ON error_logs(criado_em);
+CREATE INDEX IF NOT EXISTS idx_error_logs_severity ON error_logs(severity);

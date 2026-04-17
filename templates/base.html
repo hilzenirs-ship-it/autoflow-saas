@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{% block title %}HilFlow Connect{% endblock %}</title>
+    <title>{% block title %}AutoFlow{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=2">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -14,7 +14,7 @@
 <div class="app">
 
     <div class="sidebar">
-        <h2>HilFlow</h2>
+        <h2>AutoFlow</h2>
 
         <a href="{{ url_for('dashboard') }}">Dashboard</a>
         <a href="{{ url_for('conversas') }}">Conversas</a>
@@ -30,8 +30,9 @@
 
     <div class="main">
         <div class="topbar">
-            <h3>HilFlow Connect</h3>
+            <h3>AutoFlow</h3>
             <form method="POST" action="{{ url_for('logout') }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <button type="submit" class="flow-action">Sair</button>
             </form>
         </div>

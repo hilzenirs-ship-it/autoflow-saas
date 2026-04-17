@@ -40,6 +40,7 @@
                                 <div class="table-actions">
                                     {% if ag.status != 'cancelado' %}
                                         <form method="POST" action="{{ url_for('cancelar_agendamento', agendamento_id=ag.id) }}" class="inline-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                                             <button type="submit" class="flow-action danger small" onclick="return confirm('Cancelar este agendamento?')">
                                                 Cancelar
                                             </button>
@@ -52,6 +53,7 @@
                         <tr>
                             <td colspan="8">
                                 <form method="POST" action="{{ url_for('remarcar_agendamento', agendamento_id=ag.id) }}" class="reschedule-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                                     <input type="text" name="servico" value="{{ ag.servico or '' }}" placeholder="Serviço">
                                     <input type="text" name="data" value="{{ ag.data or '' }}" placeholder="Nova data" required>
                                     <input type="text" name="horario" value="{{ ag.horario or '' }}" placeholder="Novo horário" required>
