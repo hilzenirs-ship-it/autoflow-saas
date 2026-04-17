@@ -10,6 +10,7 @@ def carregar_config(monkeypatch, **env):
         "APP_ENV",
         "SECRET_KEY",
         "DEBUG",
+        "OPENAI_API_KEY",
         "SESSION_COOKIE_SECURE",
         "REDIS_URL",
         "RATELIMIT_STORAGE_URI",
@@ -57,6 +58,19 @@ def test_producao_cookie_secure_padrao_true(monkeypatch):
     assert config_module.Config.SESSION_COOKIE_SECURE is True
     assert config_module.Config.CACHE_TYPE == "flask_caching.backends.rediscache.RedisCache"
     assert config_module.Config.CACHE_REDIS_URL == "redis://localhost:6379/0"
+
+
+def test_openai_api_key_placeholder_e_tratado_como_ausente(monkeypatch):
+    config_module = carregar_config(
+        monkeypatch,
+        FLASK_ENV="production",
+        SECRET_KEY="segredo-forte-com-mais-de-32-caracteres",
+        DEBUG="False",
+        REDIS_URL="redis://localhost:6379/0",
+        OPENAI_API_KEY="your-openai-api-key-here",
+    )
+
+    assert config_module.Config.OPENAI_API_KEY == ""
 
 
 def test_producao_exige_rate_limit_storage_compartilhado(monkeypatch):

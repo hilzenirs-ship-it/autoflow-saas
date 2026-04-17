@@ -18,7 +18,14 @@ class Config:
             raise ValueError("SECRET_KEY deve ser definida, segura (mínimo 32 caracteres) e não fraca em produção")
         if DEBUG:
             raise ValueError("DEBUG=True nao e permitido em producao")
+    _OPENAI_API_KEYS_PLACEHOLDER = {
+        "your-openai-api-key-here",
+        "your-openai-key",
+        "replace-with-your-openai-api-key",
+    }
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+    if OPENAI_API_KEY.lower() in _OPENAI_API_KEYS_PLACEHOLDER:
+        OPENAI_API_KEY = ""
     OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
     DATABASE_PATH = os.environ.get("DATABASE_PATH", "database/hilflow.db")
     HOST = os.environ.get("HOST", "0.0.0.0")
