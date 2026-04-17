@@ -5739,6 +5739,55 @@ def extrair_referencia_mercado_pago(external_reference):
     return empresa_id, plano_id
 
 
+def extrair_partes_assinatura_mercado_pago(signature_header):
+    partes = {}
+    for parte in (signature_header or "").split(","):
+        chave_valor = parte.split("=", 1)
+        if len(chave_valor) != 2:
+            continue
+        chave = chave_valor[0].strip()
+        valor = chave_valor[1].strip()
+        if chave:
+            partes[chave] = valor
+    return partes.get("ts"), partes.get("v1")
+
+
+def timestamp_mercado_pago_valido(ts, tolerancia_segundos=600):
+    try:
+        ts_numero = int(str(ts).strip())
+    except (TypeError, ValueError):
+        return False
+
+    ts_segundos = ts_numero / 1000 if ts_numero > 9999999999 else ts_numero
+    agora = datetime.now().timestamp()
+    return abs(agora - ts_segundos) <= tolerancia_segundos
+
+
+def validar_assinatura_mercado_pago(signature_header):
+    ts, assinatura = extrair_partes_assinatura_mercado_pago(signature_header)
+    request_id = (request.headers.get("x-request-id") or "").strip()
+    data_id = (request.args.get("data.id") or "").strip()
+
+    if not ts or not assinatura or not request_id or not data_id:
+        return False, "assinatura_incompleta"
+
+    if not timestamp_mercado_pago_valido(ts):
+        return False, "timestamp_expirado"
+
+    data_id = data_id.lower()
+    manifest = f"id:{data_id};request-id:{request_id};ts:{ts};"
+    assinatura_esperada = hmac.new(
+        Config.MERCADO_PAGO_WEBHOOK_SECRET.encode(),
+        manifest.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(assinatura_esperada, assinatura):
+        return False, "assinatura_invalida"
+
+    return True, "ok"
+
+
 @app.route('/webhook/mercadopago', methods=['POST'])
 def webhook_mercadopago():
     if not Config.MERCADO_PAGO_WEBHOOK_SECRET:
@@ -5753,32 +5802,12 @@ def webhook_mercadopago():
     correlation_id = obter_ou_criar_correlation_id()
 
     try:
-        # Parse signature: ts=1234567890,v1=hash
-        parts = signature_header.split(",")
-        ts = None
-        v1 = None
-        for part in parts:
-            if part.startswith("ts="):
-                ts = part.split("=", 1)[1]
-            elif part.startswith("v1="):
-                v1 = part.split("=", 1)[1]
-
-        if not ts or not v1:
-            raise ValueError("Invalid signature format")
-
-        # Calculate expected hash
-        payload = request.get_data() or b""
-        expected_signature = hmac.new(
-            Config.MERCADO_PAGO_WEBHOOK_SECRET.encode(),
-            payload,
-            hashlib.sha256
-        ).hexdigest()
-
-        if not hmac.compare_digest(expected_signature, v1):
+        assinatura_ok, assinatura_motivo = validar_assinatura_mercado_pago(signature_header)
+        if not assinatura_ok:
             app.logger.warning("Mercado Pago webhook assinatura inválida")
             registrar_erro_log(
                 error_type="webhook_mercadopago_assinatura_invalida",
-                error_message="Assinatura HMAC inválida no webhook",
+                error_message=f"Assinatura HMAC inválida no webhook: {assinatura_motivo}",
                 correlation_id=correlation_id,
                 severity="warning"
             )

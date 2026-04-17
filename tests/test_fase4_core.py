@@ -252,6 +252,13 @@ def test_login_e_rota_protegida(client, seed_base):
     assert resposta_login.headers["Location"].endswith("/dashboard")
 
 
+def test_healthcheck_publico_valida_banco(client):
+    resposta = client.get("/healthz")
+
+    assert resposta.status_code == 200
+    assert resposta.get_json() == {"status": "ok", "database": "ok"}
+
+
 def test_webhook_whatsapp_simulado_deduplica_external_id(client, app_module, seed_base):
     base = seed_base("webhook")
     conn = app_module.get_connection()
@@ -564,6 +571,21 @@ def test_login_usuario_inexistente_registra_falha(client, app_module):
     assert logs_com_senha == 0
 
 
+def assinatura_mercado_pago_teste(secret, data_id, request_id="request-test", ts=None):
+    import hashlib
+    import hmac
+    import time
+
+    ts = str(ts or int(time.time() * 1000))
+    data_id = str(data_id).lower()
+    manifest = f"id:{data_id};request-id:{request_id};ts:{ts};"
+    assinatura = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+    return {
+        "x-signature": f"ts={ts},v1={assinatura}",
+        "x-request-id": request_id,
+    }
+
+
 def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
     payload_str = '{"test":"data"}'
     # Sem secret configurado
@@ -578,23 +600,30 @@ def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
 
     # Assinatura inválida
     response = client.post(
-        "/webhooks/mercadopago",
+        "/webhooks/mercadopago?data.id=mp-missing",
         data=payload_str,
         content_type="application/json",
-        headers={"x-signature": "ts=1234567890,v1=invalid"}
+        headers={"x-signature": "ts=1234567890,v1=invalid", "x-request-id": "request-invalid"}
     )
     assert response.status_code == 400
 
-    # Assinatura válida (calcular HMAC)
-    import hmac
-    import hashlib
-    payload = payload_str.encode()
-    expected = hmac.new(b"test_secret", payload, hashlib.sha256).hexdigest()
+    # Timestamp expirado
+    headers_expirados = assinatura_mercado_pago_teste("test_secret", "mp-missing", ts="1234567890")
     response = client.post(
-        "/webhooks/mercadopago",
+        "/webhooks/mercadopago?data.id=mp-missing",
         data=payload_str,
         content_type="application/json",
-        headers={"x-signature": f"ts=1234567890,v1={expected}"}
+        headers=headers_expirados
+    )
+    assert response.status_code == 400
+
+    # Assinatura válida no formato oficial
+    headers_validos = assinatura_mercado_pago_teste("test_secret", "mp-missing")
+    response = client.post(
+        "/webhooks/mercadopago?data.id=mp-missing",
+        data=payload_str,
+        content_type="application/json",
+        headers=headers_validos
     )
     assert response.status_code == 400
     data = response.get_json()
@@ -604,13 +633,13 @@ def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
     base = seed_base("mercado_pago")
     app_module.garantir_limites_empresa(base["empresa_id"])
     approved_payload = '{"status":"approved","external_reference":"1","id":"1234567890"}'  # Sempre usar 1 para consistência
-    approved_signature = hmac.new(b"test_secret", approved_payload.encode(), hashlib.sha256).hexdigest()
+    approved_headers = assinatura_mercado_pago_teste("test_secret", "1234567890")
 
     response = client.post(
-        "/webhooks/mercadopago",
+        "/webhooks/mercadopago?data.id=1234567890",
         data=approved_payload,
         content_type="application/json",
-        headers={"x-signature": f"ts=1234567890,v1={approved_signature}"}
+        headers=approved_headers
     )
     assert response.status_code == 200
     approved_data = response.get_json()
@@ -628,14 +657,15 @@ def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
     # Non-approved payment should be ignored and not update payment status
     base2 = seed_base("mercado_pago_pending")
     app_module.garantir_limites_empresa(base2["empresa_id"])
-    pending_payload = '{"status":"pending","external_reference":"%s","id":"%s"}' % (base2["empresa_id"], str(base2["empresa_id"]) + "999999999")
-    pending_signature = hmac.new(b"test_secret", pending_payload.encode(), hashlib.sha256).hexdigest()
+    pending_payment_id = str(base2["empresa_id"]) + "999999999"
+    pending_payload = '{"status":"pending","external_reference":"%s","id":"%s"}' % (base2["empresa_id"], pending_payment_id)
+    pending_headers = assinatura_mercado_pago_teste("test_secret", pending_payment_id)
 
     response = client.post(
-        "/webhooks/mercadopago",
+        f"/webhooks/mercadopago?data.id={pending_payment_id}",
         data=pending_payload,
         content_type="application/json",
-        headers={"x-signature": f"ts=1234567890,v1={pending_signature}"}
+        headers=pending_headers
     )
     assert response.status_code == 200
     pending_data = response.get_json()
@@ -653,9 +683,6 @@ def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
 
 
 def test_mercadopago_registra_origem_e_ignora_plano_do_payload(client, app_module, seed_base):
-    import hashlib
-    import hmac
-
     base = seed_base("mercado_pago_origem")
     app_module.garantir_limites_empresa(base["empresa_id"])
     app_module.Config.MERCADO_PAGO_WEBHOOK_SECRET = "test_secret"
@@ -676,13 +703,13 @@ def test_mercadopago_registra_origem_e_ignora_plano_do_payload(client, app_modul
         '{"status":"approved","external_reference":"%s","id":"mp-origem-1","plan_id":"%s"}'
         % (base["empresa_id"], plano_payload["id"])
     )
-    assinatura = hmac.new(b"test_secret", payload.encode(), hashlib.sha256).hexdigest()
+    headers = assinatura_mercado_pago_teste("test_secret", "mp-origem-1")
 
     response = client.post(
-        "/webhooks/mercadopago",
+        "/webhooks/mercadopago?data.id=mp-origem-1",
         data=payload,
         content_type="application/json",
-        headers={"x-signature": f"ts=1234567890,v1={assinatura}"}
+        headers=headers
     )
 
     conn = app_module.get_connection()
@@ -704,9 +731,6 @@ def test_mercadopago_registra_origem_e_ignora_plano_do_payload(client, app_modul
 
 
 def test_mercadopago_api_configurada_indisponivel_nao_atualiza_plano(client, app_module, seed_base):
-    import hashlib
-    import hmac
-
     base = seed_base("mercado_pago_api_falha")
     app_module.garantir_limites_empresa(base["empresa_id"])
     app_module.Config.MERCADO_PAGO_WEBHOOK_SECRET = "test_secret"
@@ -714,13 +738,13 @@ def test_mercadopago_api_configurada_indisponivel_nao_atualiza_plano(client, app
     app_module.consultar_pagamento_mercado_pago = lambda payment_id: None
 
     payload = '{"status":"approved","external_reference":"%s","id":"mp-api-falha-1"}' % base["empresa_id"]
-    assinatura = hmac.new(b"test_secret", payload.encode(), hashlib.sha256).hexdigest()
+    headers = assinatura_mercado_pago_teste("test_secret", "mp-api-falha-1")
 
     response = client.post(
-        "/webhooks/mercadopago",
+        "/webhooks/mercadopago?data.id=mp-api-falha-1",
         data=payload,
         content_type="application/json",
-        headers={"x-signature": f"ts=1234567890,v1={assinatura}"}
+        headers=headers
     )
 
     conn = app_module.get_connection()

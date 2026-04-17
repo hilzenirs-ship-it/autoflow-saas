@@ -1,6 +1,13 @@
+import os
+
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from utils.db import get_connection
+
+
+def _permite_senha_legada_texto_puro():
+    ambiente = os.environ.get("FLASK_ENV", os.environ.get("APP_ENV", "production")).strip().lower()
+    return ambiente in {"development", "testing"}
 
 
 def senha_confere(senha_digitada, senha_salva):
@@ -16,7 +23,10 @@ def senha_confere(senha_digitada, senha_salva):
     except Exception:
         pass
 
-    return senha_digitada == senha_salva
+    if _permite_senha_legada_texto_puro():
+        return senha_digitada == senha_salva
+
+    return False
 
 
 def gerar_hash_senha(senha):

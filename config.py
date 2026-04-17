@@ -18,12 +18,15 @@ class Config:
     HOST = os.environ.get("HOST", "0.0.0.0")
     PORT = int(os.environ.get("PORT", "5000"))
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
-    REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    REDIS_URL = os.environ.get("REDIS_URL", "").strip()
     RATELIMIT_STORAGE_URI = (
-        os.environ.get("RATELIMIT_STORAGE_URI")
-        or os.environ.get("REDIS_URL")
-        or "memory://"
+        os.environ.get("RATELIMIT_STORAGE_URI", "").strip()
+        or REDIS_URL
     )
+    if ENV in {"development", "testing"} and not RATELIMIT_STORAGE_URI:
+        RATELIMIT_STORAGE_URI = "memory://"
+    if ENV == "production" and (not RATELIMIT_STORAGE_URI or RATELIMIT_STORAGE_URI == "memory://"):
+        raise ValueError("RATELIMIT_STORAGE_URI ou REDIS_URL deve ser configurado em producao")
     _SESSION_COOKIE_SECURE_DEFAULT = "True" if ENV == "production" else "False"
     SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", _SESSION_COOKIE_SECURE_DEFAULT).lower() == "true"
     SESSION_COOKIE_HTTPONLY = True

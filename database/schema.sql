@@ -28,6 +28,23 @@ CREATE TABLE IF NOT EXISTS empresas (
 CREATE INDEX IF NOT EXISTS idx_empresas_user_id ON empresas(user_id);
 
 -- =========================
+-- MEMBROS / ATENDENTES DA EMPRESA
+-- =========================
+CREATE TABLE IF NOT EXISTS empresa_membros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    empresa_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    papel TEXT DEFAULT 'membro',
+    ativo INTEGER DEFAULT 1,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_empresa_membros_empresa_id ON empresa_membros(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_empresa_membros_user_id ON empresa_membros(user_id);
+
+-- =========================
 -- CONTATOS
 -- =========================
 CREATE TABLE IF NOT EXISTS contatos (
@@ -74,6 +91,8 @@ CREATE INDEX IF NOT EXISTS idx_conversas_contato_id ON conversas(contato_id);
 CREATE INDEX IF NOT EXISTS idx_conversas_status ON conversas(status);
 CREATE INDEX IF NOT EXISTS idx_conversas_fluxo_id_ativo ON conversas(fluxo_id_ativo);
 CREATE INDEX IF NOT EXISTS idx_conversas_bloco_atual_id ON conversas(bloco_atual_id);
+CREATE INDEX IF NOT EXISTS idx_conversas_empresa_atualizada ON conversas(empresa_id, atualizada_em DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_conversas_empresa_status ON conversas(empresa_id, status);
 
 -- =========================
 -- FLUXOS
@@ -116,6 +135,34 @@ CREATE TABLE IF NOT EXISTS fluxo_blocos (
 CREATE INDEX IF NOT EXISTS idx_fluxo_blocos_fluxo_id ON fluxo_blocos(fluxo_id);
 CREATE INDEX IF NOT EXISTS idx_fluxo_blocos_ordem ON fluxo_blocos(ordem);
 CREATE INDEX IF NOT EXISTS idx_fluxo_blocos_proximo_bloco_id ON fluxo_blocos(proximo_bloco_id);
+CREATE INDEX IF NOT EXISTS idx_fluxo_blocos_fluxo ON fluxo_blocos(fluxo_id, ordem, id);
+
+CREATE TABLE IF NOT EXISTS fluxo_execucoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversa_id INTEGER NOT NULL,
+    fluxo_id INTEGER,
+    bloco_id INTEGER,
+    evento TEXT NOT NULL,
+    detalhe TEXT,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversa_id) REFERENCES conversas(id) ON DELETE CASCADE,
+    FOREIGN KEY (fluxo_id) REFERENCES fluxos(id) ON DELETE SET NULL,
+    FOREIGN KEY (bloco_id) REFERENCES fluxo_blocos(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fluxo_execucoes_conversa_id ON fluxo_execucoes(conversa_id);
+CREATE INDEX IF NOT EXISTS idx_fluxo_execucoes_fluxo_id ON fluxo_execucoes(fluxo_id);
+
+CREATE TABLE IF NOT EXISTS fluxo_versoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fluxo_id INTEGER NOT NULL,
+    versao INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (fluxo_id) REFERENCES fluxos(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_fluxo_versoes_fluxo_id ON fluxo_versoes(fluxo_id);
 
 -- =========================
 -- REGRAS
@@ -163,6 +210,8 @@ CREATE INDEX IF NOT EXISTS idx_mensagens_remetente_tipo ON mensagens(remetente_t
 CREATE INDEX IF NOT EXISTS idx_mensagens_user_id ON mensagens(user_id);
 CREATE INDEX IF NOT EXISTS idx_mensagens_canal ON mensagens(canal);
 CREATE INDEX IF NOT EXISTS idx_mensagens_external_id_canal ON mensagens(external_id, canal, remetente_tipo, direcao);
+CREATE INDEX IF NOT EXISTS idx_mensagens_conversa_remetente ON mensagens(conversa_id, remetente_tipo);
+CREATE INDEX IF NOT EXISTS idx_mensagens_conversa_regra ON mensagens(conversa_id, regra_id);
 
 -- =========================
 -- ATENDENTES POR CONVERSA
@@ -253,11 +302,13 @@ CREATE TABLE IF NOT EXISTS empresa_limites (
     limite_mensagens INTEGER,
     limite_atendentes INTEGER,
     limite_integracoes INTEGER,
+    status TEXT DEFAULT 'ativo',
     status_pagamento TEXT DEFAULT 'trial',
     status_ciclo_vida TEXT DEFAULT 'trial',
     payment_id_externo TEXT,
     pagamento_origem_atualizacao TEXT,
     pagamento_status_externo TEXT,
+    data_proximo_retry TIMESTAMP,
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
@@ -291,6 +342,7 @@ CREATE TABLE IF NOT EXISTS agendamentos (
     data TEXT,
     horario TEXT,
     status TEXT DEFAULT 'confirmado',
+    tentativas_colisao INTEGER DEFAULT 0,
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
     FOREIGN KEY (contato_id) REFERENCES contatos(id) ON DELETE CASCADE,
@@ -304,6 +356,46 @@ CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agendamentos_slot_ativo
 ON agendamentos (empresa_id, data, horario)
 WHERE status != 'cancelado';
+
+CREATE TRIGGER IF NOT EXISTS trigger_agendamento_unico_insert
+BEFORE INSERT ON agendamentos
+WHEN EXISTS (
+    SELECT 1 FROM agendamentos
+    WHERE empresa_id = NEW.empresa_id
+      AND data = NEW.data
+      AND horario = NEW.horario
+      AND status != 'cancelado'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Ja existe agendamento ativo nesse horario.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trigger_agendamento_unico_update
+BEFORE UPDATE ON agendamentos
+WHEN NEW.status != 'cancelado' AND EXISTS (
+    SELECT 1 FROM agendamentos
+    WHERE empresa_id = NEW.empresa_id
+      AND data = NEW.data
+      AND horario = NEW.horario
+      AND status != 'cancelado'
+      AND id != NEW.id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Ja existe agendamento ativo nesse horario.');
+END;
+
+CREATE TABLE IF NOT EXISTS agenda_disponibilidade (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    empresa_id INTEGER NOT NULL,
+    dia_semana INTEGER NOT NULL,
+    hora_inicio TEXT NOT NULL,
+    hora_fim TEXT NOT NULL,
+    ativo INTEGER DEFAULT 1,
+    FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_agenda_disponibilidade_empresa_id ON agenda_disponibilidade(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_agenda_disponibilidade_empresa_dia ON agenda_disponibilidade(empresa_id, dia_semana, ativo);
 
 -- =========================
 -- TAGS
@@ -331,6 +423,7 @@ CREATE TABLE IF NOT EXISTS contato_tags (
 
 CREATE INDEX IF NOT EXISTS idx_contato_tags_contato_id ON contato_tags(contato_id);
 CREATE INDEX IF NOT EXISTS idx_contato_tags_tag_id ON contato_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_contato_tags_tag_contato ON contato_tags(tag_id, contato_id);
 
 -- =========================
 -- MÉTRICAS / EVENTOS
@@ -347,6 +440,7 @@ CREATE TABLE IF NOT EXISTS metricas_eventos (
 
 CREATE INDEX IF NOT EXISTS idx_metricas_eventos_empresa_id ON metricas_eventos(empresa_id);
 CREATE INDEX IF NOT EXISTS idx_metricas_eventos_tipo_evento ON metricas_eventos(tipo_evento);
+CREATE INDEX IF NOT EXISTS idx_metricas_empresa_tipo_criado ON metricas_eventos(empresa_id, tipo_evento, criado_em DESC);
 
 -- =========================
 -- LOGS DE ERRO PARA AUDITORIA
@@ -374,3 +468,5 @@ CREATE INDEX IF NOT EXISTS idx_error_logs_correlation_id ON error_logs(correlati
 CREATE INDEX IF NOT EXISTS idx_error_logs_empresa_id ON error_logs(empresa_id);
 CREATE INDEX IF NOT EXISTS idx_error_logs_criado_em ON error_logs(criado_em);
 CREATE INDEX IF NOT EXISTS idx_error_logs_severity ON error_logs(severity);
+CREATE INDEX IF NOT EXISTS idx_error_logs_empresa_criado ON error_logs(empresa_id, criado_em DESC);
+CREATE INDEX IF NOT EXISTS idx_error_logs_correlation ON error_logs(correlation_id);

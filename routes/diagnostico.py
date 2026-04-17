@@ -1,11 +1,24 @@
-from flask import Blueprint
+from flask import Blueprint, jsonify
 
 from services.dashboard_service import obter_teste_banco_data
 from services.empresa_service import buscar_nome_empresa
 from utils.auth import login_required, obter_empresa_id_logada
+from utils.db import get_connection
 
 
 diagnostico_bp = Blueprint("diagnostico", __name__)
+
+
+@diagnostico_bp.route("/healthz")
+def healthz():
+    try:
+        conn = get_connection()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+    except Exception:
+        return jsonify({"status": "error", "database": "unavailable"}), 503
+
+    return jsonify({"status": "ok", "database": "ok"}), 200
 
 
 @diagnostico_bp.route("/teste-banco")
