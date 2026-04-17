@@ -110,11 +110,19 @@ python app.py
 
 ## Webhooks
 
-WhatsApp/Instagram:
+WhatsApp:
 
 ```text
 /webhooks/whatsapp/<token>
 ```
+
+Instagram:
+
+```text
+/webhooks/instagram/<token>
+```
+
+Quando `META_APP_SECRET` estiver configurado, os webhooks Meta devem enviar assinatura valida em `X-Hub-Signature-256`.
 
 Mercado Pago:
 
