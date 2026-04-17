@@ -320,6 +320,17 @@ def test_rotas_privadas_exigem_login_e_publicas_permanecem_publicas(client, app_
             assert resposta.headers["Location"].endswith("/")
 
 
+def test_blueprints_legados_permanecem_desativados(app_module):
+    endpoints = {rule.endpoint for rule in app_module.app.url_map.iter_rules()}
+    regras = {rule.rule for rule in app_module.app.url_map.iter_rules()}
+
+    assert not any(endpoint.startswith("api.") for endpoint in endpoints)
+    assert not any(endpoint.startswith("fluxo_editor.") for endpoint in endpoints)
+    assert "/api/v1/conversas" not in regras
+    assert "/api/v1/search" not in regras
+    assert "/api/webhook/whatsapp" not in regras
+
+
 def test_webhook_whatsapp_simulado_deduplica_external_id(client, app_module, seed_base):
     base = seed_base("webhook")
     conn = app_module.get_connection()
