@@ -5062,7 +5062,7 @@ def validar_get_webhook_meta(canal, token):
 
 def validar_assinatura_webhook_meta(integracao, raw_body):
     config = parse_config_integracao(integracao)
-    app_secret = (config.get("app_secret") or os.environ.get("META_APP_SECRET") or "").strip()
+    app_secret = (config.get("app_secret") or Config.META_APP_SECRET or "").strip()
     if not app_secret:
         return True, "assinatura_nao_configurada"
 
@@ -5176,8 +5176,8 @@ def extrair_payload_mensagem_webhook(canal, payload):
 def montar_url_graph_meta(integracao, destino_api):
     config = parse_config_integracao(integracao)
 
-    base_url = (config.get("graph_base_url") or os.environ.get("META_GRAPH_BASE_URL") or "https://graph.facebook.com").rstrip("/")
-    graph_version = (config.get("graph_version") or os.environ.get("META_GRAPH_VERSION") or "").strip().strip("/")
+    base_url = (config.get("graph_base_url") or Config.META_GRAPH_BASE_URL or "https://graph.facebook.com").rstrip("/")
+    graph_version = (config.get("graph_version") or Config.META_GRAPH_VERSION or "").strip().strip("/")
     if graph_version:
         return f"{base_url}/{graph_version}/{destino_api}/messages"
     return f"{base_url}/{destino_api}/messages"

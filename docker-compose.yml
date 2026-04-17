@@ -17,6 +17,9 @@ services:
       - RATELIMIT_STORAGE_URI=redis://redis:6379/0
       - CACHE_REDIS_URL=redis://redis:6379/0
       - SESSION_COOKIE_SECURE=True
+      - META_APP_SECRET=${META_APP_SECRET}
+      - META_GRAPH_BASE_URL=https://graph.facebook.com
+      - META_GRAPH_VERSION=v19.0
       - MERCADO_PAGO_WEBHOOK_SECRET=${MERCADO_PAGO_WEBHOOK_SECRET}
       - MERCADO_PAGO_API_KEY=${MERCADO_PAGO_API_KEY}
       - MERCADO_PAGO_API_BASE_URL=https://api.mercadopago.com

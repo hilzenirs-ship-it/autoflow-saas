@@ -19,6 +19,7 @@ Variaveis obrigatorias/recomendadas:
 - `REDIS_URL` ou `RATELIMIT_STORAGE_URI` para rate limit compartilhado
 - `CACHE_REDIS_URL` para cache compartilhado em producao
 - `SESSION_COOKIE_SECURE=True` quando estiver usando HTTPS
+- `META_APP_SECRET` para validar assinatura dos webhooks Meta
 - `MERCADO_PAGO_WEBHOOK_SECRET`
 - `MERCADO_PAGO_API_KEY`
 
@@ -102,6 +103,9 @@ python app.py
 - `PORT`: porta local usada por `python app.py`
 - `SESSION_COOKIE_SECURE`: use `True` com HTTPS
 - `SESSION_COOKIE_SAMESITE`: politica SameSite do cookie
+- `META_APP_SECRET`: segredo do app Meta para validar `X-Hub-Signature-256`
+- `META_GRAPH_BASE_URL`: URL base da Graph API
+- `META_GRAPH_VERSION`: versao da Graph API
 - `MERCADO_PAGO_WEBHOOK_SECRET`: segredo do webhook Mercado Pago
 - `MERCADO_PAGO_API_KEY`: token para confirmar pagamentos na API Mercado Pago
 - `MERCADO_PAGO_API_BASE_URL`: URL base da API Mercado Pago

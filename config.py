@@ -1,6 +1,27 @@
 import os
 import secrets
 
+
+INTEGRATION_PLACEHOLDERS = {
+    "change-me",
+    "changeme",
+    "your-meta-app-secret",
+    "replace-with-your-meta-app-secret",
+    "your-mercado-pago-webhook-secret",
+    "replace-with-your-mercado-pago-webhook-secret",
+    "your-mercado-pago-api-key",
+    "replace-with-your-mercado-pago-api-key",
+}
+
+
+def env_sem_placeholder(nome, padrao=""):
+    valor = os.environ.get(nome, padrao)
+    valor = (valor or "").strip()
+    if valor.lower() in INTEGRATION_PLACEHOLDERS:
+        return ""
+    return valor
+
+
 class Config:
     ENV = os.environ.get("FLASK_ENV", os.environ.get("APP_ENV", "production")).strip().lower()
     DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
@@ -62,6 +83,9 @@ class Config:
     TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
     TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
     TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
-    MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get("MERCADO_PAGO_WEBHOOK_SECRET", "").strip()
-    MERCADO_PAGO_API_BASE_URL = os.environ.get("MERCADO_PAGO_API_BASE_URL", "https://api.mercadopago.com").strip()
-    MERCADO_PAGO_API_KEY = os.environ.get("MERCADO_PAGO_API_KEY", "").strip()
+    META_APP_SECRET = env_sem_placeholder("META_APP_SECRET")
+    META_GRAPH_BASE_URL = env_sem_placeholder("META_GRAPH_BASE_URL", "https://graph.facebook.com")
+    META_GRAPH_VERSION = env_sem_placeholder("META_GRAPH_VERSION", "v19.0")
+    MERCADO_PAGO_WEBHOOK_SECRET = env_sem_placeholder("MERCADO_PAGO_WEBHOOK_SECRET")
+    MERCADO_PAGO_API_BASE_URL = env_sem_placeholder("MERCADO_PAGO_API_BASE_URL", "https://api.mercadopago.com")
+    MERCADO_PAGO_API_KEY = env_sem_placeholder("MERCADO_PAGO_API_KEY")

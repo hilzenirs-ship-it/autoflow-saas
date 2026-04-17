@@ -12,6 +12,12 @@ def carregar_config(monkeypatch, **env):
         "DEBUG",
         "OPENAI_API_KEY",
         "TRUST_PROXY_HEADERS",
+        "META_APP_SECRET",
+        "META_GRAPH_BASE_URL",
+        "META_GRAPH_VERSION",
+        "MERCADO_PAGO_WEBHOOK_SECRET",
+        "MERCADO_PAGO_API_KEY",
+        "MERCADO_PAGO_API_BASE_URL",
         "SESSION_COOKIE_SECURE",
         "REDIS_URL",
         "RATELIMIT_STORAGE_URI",
@@ -72,6 +78,33 @@ def test_openai_api_key_placeholder_e_tratado_como_ausente(monkeypatch):
     )
 
     assert config_module.Config.OPENAI_API_KEY == ""
+
+
+def test_placeholders_de_integracoes_sao_tratados_como_ausentes(monkeypatch):
+    config_module = carregar_config(
+        monkeypatch,
+        FLASK_ENV="production",
+        SECRET_KEY="segredo-forte-com-mais-de-32-caracteres",
+        DEBUG="False",
+        REDIS_URL="redis://localhost:6379/0",
+        META_APP_SECRET="your-meta-app-secret",
+        MERCADO_PAGO_WEBHOOK_SECRET="your-mercado-pago-webhook-secret",
+        MERCADO_PAGO_API_KEY="your-mercado-pago-api-key",
+    )
+
+    assert config_module.Config.META_APP_SECRET == ""
+    assert config_module.Config.MERCADO_PAGO_WEBHOOK_SECRET == ""
+    assert config_module.Config.MERCADO_PAGO_API_KEY == ""
+
+
+def test_meta_graph_defaults_configurados(monkeypatch):
+    config_module = carregar_config(
+        monkeypatch,
+        FLASK_ENV="testing",
+    )
+
+    assert config_module.Config.META_GRAPH_BASE_URL == "https://graph.facebook.com"
+    assert config_module.Config.META_GRAPH_VERSION == "v19.0"
 
 
 def test_producao_exige_rate_limit_storage_compartilhado(monkeypatch):
