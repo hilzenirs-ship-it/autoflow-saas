@@ -13,6 +13,8 @@ def carregar_config(monkeypatch, **env):
         "SESSION_COOKIE_SECURE",
         "REDIS_URL",
         "RATELIMIT_STORAGE_URI",
+        "CACHE_TYPE",
+        "CACHE_REDIS_URL",
     ]:
         monkeypatch.delenv(chave, raising=False)
     for chave, valor in env.items():
@@ -42,6 +44,8 @@ def test_producao_cookie_secure_padrao_true(monkeypatch):
 
     assert config_module.Config.DEBUG is False
     assert config_module.Config.SESSION_COOKIE_SECURE is True
+    assert config_module.Config.CACHE_TYPE == "flask_caching.backends.rediscache.RedisCache"
+    assert config_module.Config.CACHE_REDIS_URL == "redis://localhost:6379/0"
 
 
 def test_producao_exige_rate_limit_storage_compartilhado(monkeypatch):
@@ -72,3 +76,16 @@ def test_testing_permite_debug_sem_enfraquecer_producao(monkeypatch):
 
     assert config_module.Config.DEBUG is True
     assert config_module.Config.SESSION_COOKIE_SECURE is False
+    assert config_module.Config.CACHE_TYPE == "flask_caching.backends.simplecache.SimpleCache"
+
+
+def test_producao_rejeita_cache_local(monkeypatch):
+    with pytest.raises(ValueError, match="CACHE_TYPE SimpleCache"):
+        carregar_config(
+            monkeypatch,
+            FLASK_ENV="production",
+            SECRET_KEY="segredo-forte-com-mais-de-32-caracteres",
+            DEBUG="False",
+            REDIS_URL="redis://localhost:6379/0",
+            CACHE_TYPE="flask_caching.backends.simplecache.SimpleCache",
+        )

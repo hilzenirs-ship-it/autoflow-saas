@@ -27,6 +27,20 @@ class Config:
         RATELIMIT_STORAGE_URI = "memory://"
     if ENV == "production" and (not RATELIMIT_STORAGE_URI or RATELIMIT_STORAGE_URI == "memory://"):
         raise ValueError("RATELIMIT_STORAGE_URI ou REDIS_URL deve ser configurado em producao")
+    _CACHE_REDIS_FALLBACK = RATELIMIT_STORAGE_URI if RATELIMIT_STORAGE_URI.startswith(("redis://", "rediss://", "unix://")) else ""
+    CACHE_REDIS_URL = (
+        os.environ.get("CACHE_REDIS_URL", "").strip()
+        or REDIS_URL
+        or _CACHE_REDIS_FALLBACK
+    )
+    CACHE_TYPE = os.environ.get("CACHE_TYPE", "").strip()
+    if not CACHE_TYPE:
+        if ENV in {"development", "testing"} and not CACHE_REDIS_URL:
+            CACHE_TYPE = "flask_caching.backends.simplecache.SimpleCache"
+        else:
+            CACHE_TYPE = "flask_caching.backends.rediscache.RedisCache"
+    if ENV == "production" and CACHE_TYPE.endswith("SimpleCache"):
+        raise ValueError("CACHE_TYPE SimpleCache nao e permitido em producao")
     _SESSION_COOKIE_SECURE_DEFAULT = "True" if ENV == "production" else "False"
     SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", _SESSION_COOKIE_SECURE_DEFAULT).lower() == "true"
     SESSION_COOKIE_HTTPONLY = True

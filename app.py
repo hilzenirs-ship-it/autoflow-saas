@@ -70,11 +70,13 @@ def registrar_resposta_http(response):
 
 csrf = CSRFProtect(app)
 limiter.init_app(app)
-from flask_caching import Cache
 
 from utils.cache import cache
 
-cache.init_app(app, config={'CACHE_TYPE': 'redis', 'CACHE_REDIS_URL': Config.REDIS_URL or 'redis://localhost:6379/0'})
+cache.init_app(app, config={
+    'CACHE_TYPE': Config.CACHE_TYPE,
+    'CACHE_REDIS_URL': Config.CACHE_REDIS_URL,
+})
 
 
 # Handler global para erro 500 (não tratado)
