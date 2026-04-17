@@ -22,12 +22,15 @@ Variaveis obrigatorias/recomendadas:
 - `META_APP_SECRET` para validar assinatura dos webhooks Meta
 - `MERCADO_PAGO_WEBHOOK_SECRET`
 - `MERCADO_PAGO_API_KEY`
+- `MERCADO_PAGO_REQUIRED=True` quando cobranca Mercado Pago estiver ativa
 
 Em producao, o app falha ao iniciar se:
 
 - `SECRET_KEY` estiver ausente, curta ou fraca
 - `DEBUG=True`
+- `DATABASE_PATH` nao estiver configurado explicitamente
 - `REDIS_URL`/`RATELIMIT_STORAGE_URI` nao estiver configurado para o rate limit
+- `MERCADO_PAGO_REQUIRED=True` e Mercado Pago estiver sem segredo/API key
 
 O healthcheck publico fica em:
 
@@ -92,6 +95,7 @@ python app.py
 
 - `SECRET_KEY`: chave secreta do Flask
 - `OPENAI_API_KEY`: chave da OpenAI
+- `OPENAI_REQUIRED`: exige chave da OpenAI quando `True`
 - `OPENAI_MODEL`: modelo usado pela IA
 - `DATABASE_PATH`: caminho do banco SQLite
 - `REDIS_URL`: URL do Redis
@@ -104,10 +108,12 @@ python app.py
 - `SESSION_COOKIE_SECURE`: use `True` com HTTPS
 - `SESSION_COOKIE_SAMESITE`: politica SameSite do cookie
 - `META_APP_SECRET`: segredo do app Meta para validar `X-Hub-Signature-256`
+- `META_WEBHOOKS_REQUIRED`: exige `META_APP_SECRET` quando `True`
 - `META_GRAPH_BASE_URL`: URL base da Graph API
 - `META_GRAPH_VERSION`: versao da Graph API
 - `MERCADO_PAGO_WEBHOOK_SECRET`: segredo do webhook Mercado Pago
 - `MERCADO_PAGO_API_KEY`: token para confirmar pagamentos na API Mercado Pago
+- `MERCADO_PAGO_REQUIRED`: exige variaveis Mercado Pago quando `True`
 - `MERCADO_PAGO_API_BASE_URL`: URL base da API Mercado Pago
 - `SEED_ADMIN_EMAIL`: e-mail opcional para seed inicial
 - `SEED_ADMIN_PASSWORD`: senha forte opcional para seed inicial

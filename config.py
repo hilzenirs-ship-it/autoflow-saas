@@ -44,11 +44,17 @@ class Config:
         "your-openai-key",
         "replace-with-your-openai-api-key",
     }
+    _DATABASE_PATH_ENV = os.environ.get("DATABASE_PATH", "").strip()
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
     if OPENAI_API_KEY.lower() in _OPENAI_API_KEYS_PLACEHOLDER:
         OPENAI_API_KEY = ""
+    OPENAI_REQUIRED = os.environ.get("OPENAI_REQUIRED", "False").lower() == "true"
+    if OPENAI_REQUIRED and not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY deve ser configurada quando OPENAI_REQUIRED=True")
     OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
-    DATABASE_PATH = os.environ.get("DATABASE_PATH", "database/hilflow.db")
+    if ENV == "production" and not _DATABASE_PATH_ENV:
+        raise ValueError("DATABASE_PATH deve ser configurado explicitamente em producao")
+    DATABASE_PATH = _DATABASE_PATH_ENV or "database/hilflow.db"
     HOST = os.environ.get("HOST", "0.0.0.0")
     PORT = int(os.environ.get("PORT", "5000"))
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
@@ -86,6 +92,15 @@ class Config:
     META_APP_SECRET = env_sem_placeholder("META_APP_SECRET")
     META_GRAPH_BASE_URL = env_sem_placeholder("META_GRAPH_BASE_URL", "https://graph.facebook.com")
     META_GRAPH_VERSION = env_sem_placeholder("META_GRAPH_VERSION", "v19.0")
+    META_WEBHOOKS_REQUIRED = os.environ.get("META_WEBHOOKS_REQUIRED", "False").lower() == "true"
+    if META_WEBHOOKS_REQUIRED and not META_APP_SECRET:
+        raise ValueError("META_APP_SECRET deve ser configurado quando META_WEBHOOKS_REQUIRED=True")
     MERCADO_PAGO_WEBHOOK_SECRET = env_sem_placeholder("MERCADO_PAGO_WEBHOOK_SECRET")
     MERCADO_PAGO_API_BASE_URL = env_sem_placeholder("MERCADO_PAGO_API_BASE_URL", "https://api.mercadopago.com")
     MERCADO_PAGO_API_KEY = env_sem_placeholder("MERCADO_PAGO_API_KEY")
+    MERCADO_PAGO_REQUIRED = os.environ.get(
+        "MERCADO_PAGO_REQUIRED",
+        "True" if ENV == "production" else "False"
+    ).lower() == "true"
+    if MERCADO_PAGO_REQUIRED and (not MERCADO_PAGO_WEBHOOK_SECRET or not MERCADO_PAGO_API_KEY):
+        raise ValueError("MERCADO_PAGO_WEBHOOK_SECRET e MERCADO_PAGO_API_KEY devem ser configurados")
