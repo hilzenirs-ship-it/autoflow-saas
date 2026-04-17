@@ -6033,4 +6033,6 @@ registrar_aliases_endpoints_legados(app, "webhooks")
 
 
 if __name__ == "__main__":
+    if Config.ENV == "production":
+        raise RuntimeError("Nao execute app.py em producao. Use gunicorn com wsgi:app.")
     app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)
