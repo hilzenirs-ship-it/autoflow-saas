@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta
 
 from tests.conftest import login_session
@@ -275,6 +276,48 @@ def test_healthcheck_publico_valida_banco(client):
     assert data["database"] == "ok"
     assert data["redis"] in {"ok", "not_configured"}
     assert data["timestamp"]
+
+
+def _path_exemplo_para_regra(rule):
+    path = rule.rule
+    path = re.sub(r"<int:[^>]+>", "1", path)
+    path = re.sub(r"<path:[^>]+>", "arquivo", path)
+    path = re.sub(r"<[^>]+>", "teste", path)
+    return path
+
+
+def test_rotas_privadas_exigem_login_e_publicas_permanecem_publicas(client, app_module):
+    rotas_publicas = {
+        "/",
+        "/cadastro",
+        "/healthz",
+        "/webhook/mercadopago",
+        "/webhooks/mercadopago",
+    }
+    prefixos_publicos = (
+        "/static/",
+        "/webhooks/whatsapp/",
+        "/webhooks/instagram/",
+    )
+
+    for caminho in ("/", "/cadastro", "/healthz"):
+        resposta = client.get(caminho)
+        assert resposta.status_code == 200
+
+    resposta_webhook = client.get("/webhooks/whatsapp/token-inexistente")
+    assert resposta_webhook.status_code != 302
+
+    for rule in app_module.app.url_map.iter_rules():
+        if rule.rule in rotas_publicas or rule.rule.startswith(prefixos_publicos):
+            continue
+        if rule.endpoint == "static":
+            continue
+
+        caminho = _path_exemplo_para_regra(rule)
+        for metodo in sorted(rule.methods - {"HEAD", "OPTIONS"}):
+            resposta = client.open(caminho, method=metodo)
+            assert resposta.status_code == 302, f"{metodo} {rule.rule} ficou publico"
+            assert resposta.headers["Location"].endswith("/")
 
 
 def test_webhook_whatsapp_simulado_deduplica_external_id(client, app_module, seed_base):
