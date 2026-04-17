@@ -39,6 +39,7 @@ GET /healthz
 ```
 
 Ele retorna apenas o estado basico do app e banco.
+Quando Redis/cache estiver configurado, tambem valida conectividade Redis.
 
 ## Docker
 

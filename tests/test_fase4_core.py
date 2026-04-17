@@ -256,7 +256,12 @@ def test_healthcheck_publico_valida_banco(client):
     resposta = client.get("/healthz")
 
     assert resposta.status_code == 200
-    assert resposta.get_json() == {"status": "ok", "database": "ok"}
+    data = resposta.get_json()
+    assert data["status"] == "ok"
+    assert data["app"] == "ok"
+    assert data["database"] == "ok"
+    assert data["redis"] in {"ok", "not_configured"}
+    assert data["timestamp"]
 
 
 def test_webhook_whatsapp_simulado_deduplica_external_id(client, app_module, seed_base):

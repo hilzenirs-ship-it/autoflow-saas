@@ -1,5 +1,9 @@
+from datetime import datetime, timezone
+
+import redis
 from flask import Blueprint, jsonify
 
+from config import Config
 from services.dashboard_service import obter_teste_banco_data
 from services.empresa_service import buscar_nome_empresa
 from utils.auth import login_required, obter_empresa_id_logada
@@ -11,14 +15,34 @@ diagnostico_bp = Blueprint("diagnostico", __name__)
 
 @diagnostico_bp.route("/healthz")
 def healthz():
+    resultado = {
+        "status": "ok",
+        "app": "ok",
+        "database": "ok",
+        "redis": "not_configured",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
     try:
         conn = get_connection()
         conn.execute("SELECT 1").fetchone()
         conn.close()
     except Exception:
-        return jsonify({"status": "error", "database": "unavailable"}), 503
+        resultado["status"] = "error"
+        resultado["database"] = "unavailable"
 
-    return jsonify({"status": "ok", "database": "ok"}), 200
+    redis_url = Config.CACHE_REDIS_URL or Config.RATELIMIT_STORAGE_URI or Config.REDIS_URL
+    if redis_url and redis_url != "memory://" and redis_url.startswith(("redis://", "rediss://", "unix://")):
+        try:
+            cliente = redis.Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1)
+            cliente.ping()
+            resultado["redis"] = "ok"
+        except Exception:
+            resultado["status"] = "error"
+            resultado["redis"] = "unavailable"
+
+    status_code = 200 if resultado["status"] == "ok" else 503
+    return jsonify(resultado), status_code
 
 
 @diagnostico_bp.route("/teste-banco")
