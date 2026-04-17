@@ -17,6 +17,7 @@ database/*.db
 tests/.tmp/
 temp.txt
 temp_check.py
+backups/
 
 *.log
 build/

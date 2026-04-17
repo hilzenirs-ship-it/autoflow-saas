@@ -20,3 +20,4 @@ dist/
 tests/.tmp/
 temp.txt
 temp_check.py
+backups/

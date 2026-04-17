@@ -81,6 +81,16 @@ Nunca use senha fraca em seed de producao.
 
 Para maior volume, a evolucao recomendada e migrar para PostgreSQL mantendo os filtros por `empresa_id`, indices e validacoes de ownership.
 
+## Backup SQLite
+
+Crie backups manuais do SQLite com:
+
+```bash
+python backup_sqlite.py --backup-dir backups
+```
+
+O comando cria uma copia com timestamp e nao apaga backups antigos. Em producao, armazene o diretorio de backup fora do volume publico e copie os arquivos para storage externo seguro.
+
 ## Desenvolvimento Local
 
 ```bash
