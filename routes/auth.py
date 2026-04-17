@@ -1,4 +1,4 @@
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
 
 from services.auth_service import buscar_empresa_do_usuario, buscar_usuario_por_email, gerar_hash_senha, senha_confere
 from services.saas_limits_service import garantir_limites_empresa
@@ -32,8 +32,8 @@ def registrar_login_log(user_id=None, empresa_id=None, email_tentado=None, statu
         )
         conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        current_app.logger.warning("Falha ao registrar login_log: %s", exc)
 
 
 @auth_bp.route("/", methods=["GET", "POST"])

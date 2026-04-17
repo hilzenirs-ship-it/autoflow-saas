@@ -135,6 +135,19 @@ def test_agendamento_bloqueia_conflito(app_module, seed_base):
     assert sucesso_2 is False
     assert "existe agendamento" in erro_2
 
+    conn = app_module.get_connection()
+    evento = conn.execute(
+        """
+        SELECT id
+        FROM metricas_eventos
+        WHERE empresa_id = ?
+          AND tipo_evento = 'agendamento_colisao'
+        """,
+        (base["empresa_id"],)
+    ).fetchone()
+    conn.close()
+    assert evento is not None
+
 
 def test_agendamento_tem_indice_unico_parcial(app_module):
     conn = app_module.get_connection()
@@ -768,6 +781,48 @@ def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
     conn.close()
     assert pending_limite is not None
     assert pending_limite["status_pagamento"] != "pago"
+
+
+def test_webhook_mercadopago_registra_payloads_invalidos(client, app_module):
+    payload_str = '{"test":"data"}'
+    app_module.Config.MERCADO_PAGO_WEBHOOK_SECRET = ""
+
+    response = client.post("/webhooks/mercadopago", data=payload_str, content_type="application/json")
+    assert response.status_code == 500
+
+    app_module.Config.MERCADO_PAGO_WEBHOOK_SECRET = "test_secret"
+    response = client.post("/webhooks/mercadopago", data=payload_str, content_type="application/json")
+    assert response.status_code == 400
+
+    headers_validos = assinatura_mercado_pago_teste("test_secret", "mp-json")
+    response = client.post(
+        "/webhooks/mercadopago?data.id=mp-json",
+        data="payload-invalido",
+        content_type="application/json",
+        headers=headers_validos
+    )
+    assert response.status_code == 400
+
+    conn = app_module.get_connection()
+    tipos = {
+        row["error_type"]
+        for row in conn.execute(
+            """
+            SELECT error_type
+            FROM error_logs
+            WHERE error_type IN (
+                'webhook_mercadopago_secret_nao_configurado',
+                'webhook_mercadopago_assinatura_ausente',
+                'webhook_mercadopago_json_invalido'
+            )
+            """
+        ).fetchall()
+    }
+    conn.close()
+
+    assert "webhook_mercadopago_secret_nao_configurado" in tipos
+    assert "webhook_mercadopago_assinatura_ausente" in tipos
+    assert "webhook_mercadopago_json_invalido" in tipos
 
 
 def test_mercadopago_registra_origem_e_ignora_plano_do_payload(client, app_module, seed_base):

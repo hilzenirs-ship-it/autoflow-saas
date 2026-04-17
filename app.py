@@ -1746,7 +1746,17 @@ def salvar_agendamento(conversa_id, data_texto, horario_texto, servico=None):
                 horario_texto
             )
             if erro_validacao:
+                registrar_colisao = "existe agendamento" in erro_validacao.lower()
                 conn.rollback()
+                if registrar_colisao:
+                    _registrar_colisao_agendamento(
+                        conversa["empresa_id"],
+                        conversa_id,
+                        data_normalizada or data_texto,
+                        horario_normalizado or horario_texto,
+                        servico,
+                        tentativa=tentativa + 1
+                    )
                 conn.close()
                 return False, erro_validacao
 
@@ -5789,16 +5799,28 @@ def registrar_evento_mercado_pago(empresa_id, tipo, payment_id=None, status=None
 @csrf.exempt
 @limiter.limit("60 per minute")
 def webhook_mercadopago():
+    correlation_id = obter_ou_criar_correlation_id()
+
     if not Config.MERCADO_PAGO_WEBHOOK_SECRET:
         app.logger.warning("Mercado Pago webhook secret não configurado")
+        registrar_erro_log(
+            error_type="webhook_mercadopago_secret_nao_configurado",
+            error_message="Mercado Pago webhook secret nao configurado",
+            correlation_id=correlation_id,
+            severity="critical"
+        )
         return jsonify({"error": "Webhook secret not configured"}), 500
 
     signature_header = request.headers.get("x-signature")
     if not signature_header:
         app.logger.warning("Mercado Pago webhook sem header x-signature")
+        registrar_erro_log(
+            error_type="webhook_mercadopago_assinatura_ausente",
+            error_message="Webhook Mercado Pago sem header x-signature",
+            correlation_id=correlation_id,
+            severity="warning"
+        )
         return jsonify({"error": "Missing signature"}), 400
-
-    correlation_id = obter_ou_criar_correlation_id()
 
     try:
         assinatura_ok, assinatura_motivo = validar_assinatura_mercado_pago(signature_header)
@@ -5815,6 +5837,12 @@ def webhook_mercadopago():
         # Signature valid, process payload
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
+            registrar_erro_log(
+                error_type="webhook_mercadopago_json_invalido",
+                error_message="Payload JSON invalido no webhook Mercado Pago",
+                correlation_id=correlation_id,
+                severity="warning"
+            )
             return jsonify({"error": "Invalid JSON"}), 400
 
         app.logger.info(f"Mercado Pago webhook recebido [correlation_id={correlation_id}]: {data}")
