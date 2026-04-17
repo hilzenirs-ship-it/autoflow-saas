@@ -7,13 +7,14 @@ services:
       - "5000:5000"
     environment:
       - SECRET_KEY=${SECRET_KEY}
-      - OPENAI_API_KEY=your-openai-key
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DATABASE_PATH=database/hilflow.db
       - DEBUG=False
       - FLASK_ENV=production
       - LOG_LEVEL=INFO
       - REDIS_URL=redis://redis:6379/0
       - RATELIMIT_STORAGE_URI=redis://redis:6379/0
+      - CACHE_REDIS_URL=redis://redis:6379/0
       - SESSION_COOKIE_SECURE=True
       - MERCADO_PAGO_WEBHOOK_SECRET=${MERCADO_PAGO_WEBHOOK_SECRET}
       - MERCADO_PAGO_API_KEY=${MERCADO_PAGO_API_KEY}

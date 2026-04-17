@@ -17,6 +17,7 @@ Variaveis obrigatorias/recomendadas:
 - `SECRET_KEY` forte, unica e secreta
 - `DATABASE_PATH` apontando para o SQLite persistente
 - `REDIS_URL` ou `RATELIMIT_STORAGE_URI` para rate limit compartilhado
+- `CACHE_REDIS_URL` para cache compartilhado em producao
 - `SESSION_COOKIE_SECURE=True` quando estiver usando HTTPS
 - `MERCADO_PAGO_WEBHOOK_SECRET`
 - `MERCADO_PAGO_API_KEY`
@@ -48,6 +49,7 @@ No Docker Compose atual, Redis ja esta configurado para rate limit:
 ```text
 REDIS_URL=redis://redis:6379/0
 RATELIMIT_STORAGE_URI=redis://redis:6379/0
+CACHE_REDIS_URL=redis://redis:6379/0
 ```
 
 ## Banco
@@ -93,6 +95,7 @@ python app.py
 - `DATABASE_PATH`: caminho do banco SQLite
 - `REDIS_URL`: URL do Redis
 - `RATELIMIT_STORAGE_URI`: storage compartilhado do rate limit
+- `CACHE_REDIS_URL`: Redis usado pelo cache
 - `LOG_LEVEL`: nivel de logs
 - `HOST`: host local usado por `python app.py`
 - `PORT`: porta local usada por `python app.py`
