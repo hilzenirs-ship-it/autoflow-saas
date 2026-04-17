@@ -97,6 +97,7 @@ python app.py
 - `RATELIMIT_STORAGE_URI`: storage compartilhado do rate limit
 - `CACHE_REDIS_URL`: Redis usado pelo cache
 - `LOG_LEVEL`: nivel de logs
+- `TRUST_PROXY_HEADERS`: use `True` somente atras de proxy confiavel
 - `HOST`: host local usado por `python app.py`
 - `PORT`: porta local usada por `python app.py`
 - `SESSION_COOKIE_SECURE`: use `True` com HTTPS

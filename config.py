@@ -31,6 +31,7 @@ class Config:
     HOST = os.environ.get("HOST", "0.0.0.0")
     PORT = int(os.environ.get("PORT", "5000"))
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+    TRUST_PROXY_HEADERS = os.environ.get("TRUST_PROXY_HEADERS", "False").lower() == "true"
     REDIS_URL = os.environ.get("REDIS_URL", "").strip()
     RATELIMIT_STORAGE_URI = (
         os.environ.get("RATELIMIT_STORAGE_URI", "").strip()

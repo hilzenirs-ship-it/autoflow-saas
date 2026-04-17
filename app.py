@@ -37,8 +37,11 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+if Config.TRUST_PROXY_HEADERS:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = Config.SECRET_KEY
 app.config.update(
     DEBUG=Config.DEBUG,

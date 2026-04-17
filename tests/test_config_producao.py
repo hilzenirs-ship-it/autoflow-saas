@@ -11,6 +11,7 @@ def carregar_config(monkeypatch, **env):
         "SECRET_KEY",
         "DEBUG",
         "OPENAI_API_KEY",
+        "TRUST_PROXY_HEADERS",
         "SESSION_COOKIE_SECURE",
         "REDIS_URL",
         "RATELIMIT_STORAGE_URI",
@@ -102,6 +103,25 @@ def test_testing_permite_debug_sem_enfraquecer_producao(monkeypatch):
     assert config_module.Config.DEBUG is True
     assert config_module.Config.SESSION_COOKIE_SECURE is False
     assert config_module.Config.CACHE_TYPE == "flask_caching.backends.simplecache.SimpleCache"
+
+
+def test_proxy_headers_desativado_por_padrao(monkeypatch):
+    config_module = carregar_config(
+        monkeypatch,
+        FLASK_ENV="testing",
+    )
+
+    assert config_module.Config.TRUST_PROXY_HEADERS is False
+
+
+def test_proxy_headers_pode_ser_habilitado(monkeypatch):
+    config_module = carregar_config(
+        monkeypatch,
+        FLASK_ENV="testing",
+        TRUST_PROXY_HEADERS="True",
+    )
+
+    assert config_module.Config.TRUST_PROXY_HEADERS is True
 
 
 def test_producao_rejeita_cache_local(monkeypatch):
