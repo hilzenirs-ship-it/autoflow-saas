@@ -5529,47 +5529,6 @@ def consultar_pagamento_mercado_pago(payment_id):
         app.logger.error(f"Erro ao consultar Mercado Pago API: {str(e)}")
         return None
 
-    try:
-        url = f"{Config.MERCADO_PAGO_API_BASE_URL}/v1/payments/{payment_id}"
-        headers = {
-            "Authorization": f"Bearer {Config.MERCADO_PAGO_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        resposta = requests.get(url, headers=headers, timeout=10)
-        resposta.raise_for_status()
-
-        dados_pagamento = resposta.json()
-
-        # Validar campos essenciais
-        if not isinstance(dados_pagamento, dict):
-            return None
-
-        payment_id_api = dados_pagamento.get("id")
-        status_api = dados_pagamento.get("status")
-        external_reference_api = dados_pagamento.get("external_reference")
-
-        if not payment_id_api or not status_api:
-            return None
-
-        return {
-            "id": payment_id_api,
-            "status": status_api,
-            "external_reference": external_reference_api,
-            "transaction_amount": dados_pagamento.get("transaction_amount"),
-            "date_approved": dados_pagamento.get("date_approved"),
-            "date_created": dados_pagamento.get("date_created"),
-            "payment_method_id": dados_pagamento.get("payment_method", {}).get("id") if dados_pagamento.get("payment_method") else None,
-            "dados_completos": dados_pagamento
-        }
-
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Erro ao consultar API Mercado Pago para payment_id {payment_id}: {e}")
-        return None
-    except Exception as e:
-        app.logger.error(f"Erro inesperado ao consultar Mercado Pago: {e}")
-        return None
-
 
 def processar_transicao_status_pagamento(conn, empresa_id, novo_status, payment_id_externo=None, plano_id=None, correlation_id=None, origem=None):
     """
@@ -5803,6 +5762,29 @@ def validar_assinatura_mercado_pago(signature_header):
     return True, "ok"
 
 
+def registrar_evento_mercado_pago(empresa_id, tipo, payment_id=None, status=None, correlation_id=None, extra=None):
+    if not empresa_id or not tipo:
+        return
+
+    payload = {
+        "payment_id": str(payment_id) if payment_id is not None else None,
+        "status": status,
+        "correlation_id": correlation_id,
+    }
+    if isinstance(extra, dict):
+        payload.update(extra)
+
+    try:
+        registrar_evento(
+            f"webhook_mercadopago_{tipo}",
+            referencia_id=payment_id,
+            valor=json.dumps(payload, ensure_ascii=False),
+            empresa_id=empresa_id,
+        )
+    except Exception as exc:
+        app.logger.warning("Falha ao registrar evento Mercado Pago %s: %s", tipo, exc)
+
+
 @app.route('/webhook/mercadopago', methods=['POST'])
 @csrf.exempt
 @limiter.limit("60 per minute")
@@ -5887,11 +5869,28 @@ def webhook_mercadopago():
         conn.close()
 
         # CONSULTAR API OFICIAL DO MERCADO PAGO PARA VALIDAÇÃO (OPCIONAL)
+        registrar_evento_mercado_pago(
+            empresa_id,
+            "recebido",
+            payment_id=payment_id_webhook,
+            status=status_webhook,
+            correlation_id=correlation_id,
+            extra={"external_reference": str(external_reference)}
+        )
         dados_pagamento_api = consultar_pagamento_mercado_pago(payment_id_webhook)
         if dados_pagamento_api:
             # VALIDAR CONSISTÊNCIA ENTRE WEBHOOK E API
-            status_api = dados_pagamento_api["status"].lower()
-            external_reference_api = dados_pagamento_api["external_reference"]
+            status_api = (dados_pagamento_api.get("status") or "").strip().lower()
+            external_reference_api = dados_pagamento_api.get("external_reference")
+            if not status_api or external_reference_api is None:
+                registrar_erro_log(
+                    error_type="webhook_mercadopago_api_campos_invalidos",
+                    error_message=f"Resposta incompleta da API Mercado Pago para payment_id={payment_id_webhook}",
+                    correlation_id=correlation_id,
+                    empresa_id=empresa_id,
+                    severity="warning"
+                )
+                return jsonify({"error": "Invalid payment data"}), 400
             if status_api not in status_permitidos:
                 registrar_erro_log(
                     error_type="webhook_mercadopago_status_api_invalido",
@@ -5960,6 +5959,14 @@ def webhook_mercadopago():
         # PROCESSAR TRANSIÇÃO DE STATUS APENAS PARA PAGAMENTOS APROVADOS
         if status_final != "approved":
             app.logger.info(f"Pagamento {status_final} ignorado para empresa {empresa_id} (só approved é processado) [correlation_id={correlation_id}]")
+            registrar_evento_mercado_pago(
+                empresa_id,
+                "ignorado",
+                payment_id=payment_id_webhook,
+                status=status_final,
+                correlation_id=correlation_id,
+                extra={"reason": "not_approved"}
+            )
             return jsonify({"status": "ignored", "reason": "not_approved"}), 200
 
         # Processar apenas pagamentos approved
@@ -5977,6 +5984,13 @@ def webhook_mercadopago():
                 conn.rollback()
                 conn.close()
                 app.logger.info(f"Pagamento {payment_id_webhook} já processado para empresa {empresa_id}")
+                registrar_evento_mercado_pago(
+                    empresa_id,
+                    "duplicado",
+                    payment_id=payment_id_webhook,
+                    status=status_final,
+                    correlation_id=correlation_id,
+                )
                 return jsonify({"status": "already_processed"}), 200
 
             # Processar transição
@@ -5992,6 +6006,13 @@ def webhook_mercadopago():
             conn.close()
 
             app.logger.info(f"Pagamento {status_final} processado para empresa {empresa_id} [correlation_id={correlation_id}]")
+            registrar_evento_mercado_pago(
+                empresa_id,
+                "confirmado",
+                payment_id=payment_id_webhook,
+                status=status_final,
+                correlation_id=correlation_id,
+            )
 
         except Exception as e:
             conn.rollback()

@@ -703,6 +703,40 @@ def test_webhook_mercadopago_valida_assinatura(client, app_module, seed_base):
     assert limite is not None
     assert limite["status_pagamento"] == "pago"
 
+    repetido = client.post(
+        "/webhooks/mercadopago?data.id=1234567890",
+        data=approved_payload,
+        content_type="application/json",
+        headers=approved_headers
+    )
+    assert repetido.status_code == 200
+    assert repetido.get_json()["status"] == "already_processed"
+
+    conn = app_module.get_connection()
+    transicoes = conn.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM metricas_eventos
+        WHERE empresa_id = ?
+          AND tipo_evento = 'pagamento_status_transicao'
+          AND valor LIKE ?
+        """,
+        (base["empresa_id"], "%1234567890%")
+    ).fetchone()["total"]
+    duplicados = conn.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM metricas_eventos
+        WHERE empresa_id = ?
+          AND tipo_evento = 'webhook_mercadopago_duplicado'
+        """,
+        (base["empresa_id"],)
+    ).fetchone()["total"]
+    conn.close()
+
+    assert transicoes == 1
+    assert duplicados == 1
+
     # Non-approved payment should be ignored and not update payment status
     base2 = seed_base("mercado_pago_pending")
     app_module.garantir_limites_empresa(base2["empresa_id"])
